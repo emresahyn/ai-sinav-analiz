@@ -1,0 +1,25 @@
+/* styles/globals.css */
+
+/* Bootstrap stillerini içe aktar */
+@import 'bootstrap/dist/css/bootstrap.min.css';
+
+/* Tailwind CSS direktifleri */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Opsiyonel: Proje genelinde temel gövde stilleri ekleyebilirsiniz */
+body {
+    background-color: #f8f9fa; /* Bootstrap'in açık gri arka plan rengi */
+    color: #212529; /* Bootstrap'in ana metin rengi */
+}
+
+/* Linkler için temel stiller */
+a {
+    color: #0d6efd; /* Bootstrap'in varsayılan link rengi */
+    text-decoration: none; /* Linklerin altını çizmeyi kaldır */
+}
+
+a:hover {
+    text-decoration: underline; /* Fare üzerine gelince altını çiz */
+}

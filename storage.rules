@@ -1,0 +1,10 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Herkese açık okuma ve yazma izni (geliştirme için)
+    // Prodüksiyonda kimlik doğrulamaya göre kısıtlanmalıdır.
+    match /{allPaths=**} {
+      allow read, write: if true;
+    }
+  }
+}
