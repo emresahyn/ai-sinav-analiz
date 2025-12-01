@@ -17,7 +17,7 @@ interface UploadedFile { name: string; path: string; }
 interface StudentFiles { [studentId: string]: UploadedFile[]; }
 
 // --- Student Form Component --- //
-function StudentUploadForm({ student, examId, teacherId, initialFiles }: { student: Student; examId: string; teacherId: string, initialFiles: UploadedFile[] }) {
+function StudentUploadForm({ student, examId, teacherId, initialFiles, isAnalysisRunning }: { student: Student; examId: string; teacherId: string, initialFiles: UploadedFile[], isAnalysisRunning: boolean }) {
     const [uploadState, formAction] = useFormState(uploadExamPaper, { message: '', success: false, studentId: student.id, uploadedFiles: [] });
     const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
     const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>(initialFiles);
@@ -25,21 +25,17 @@ function StudentUploadForm({ student, examId, teacherId, initialFiles }: { stude
     const [uploadMessage, setUploadMessage] = useState<{text: string, success: boolean, key: number} | null>(null);
     const formRef = useRef<HTMLFormElement>(null);
 
-    // Sunucudan gelen yükleme sonucunu yakala ve geçici mesajı ayarla
     useEffect(() => {
         if (uploadState.message && uploadState.studentId === student.id) {
-            // State'i güncelle
             if(uploadState.success) {
                 setUploadedFiles(prev => [...prev, ...uploadState.uploadedFiles!]);
                 setSelectedFiles([]);
                 formRef.current?.reset();
             }
-            // Geçici mesajı ayarla
             setUploadMessage({ text: uploadState.message, success: uploadState.success, key: Date.now() });
         }
     }, [uploadState]);
 
-    // Yükleme mesajını 5 saniye sonra temizle
     useEffect(() => {
         if (uploadMessage) {
             const timer = setTimeout(() => setUploadMessage(null), 5000);
@@ -47,7 +43,6 @@ function StudentUploadForm({ student, examId, teacherId, initialFiles }: { stude
         }
     }, [uploadMessage]);
 
-    // Silme mesajını 5 saniye sonra temizle
     useEffect(() => {
         if (deleteMessage) {
             const timer = setTimeout(() => setDeleteMessage(null), 5000);
@@ -71,7 +66,7 @@ function StudentUploadForm({ student, examId, teacherId, initialFiles }: { stude
     };
 
     return (
-        <li className="list-group-item">
+        <li className={`list-group-item ${isAnalysisRunning ? 'bg-light text-muted' : ''}`}>
             <div className="d-flex flex-wrap align-items-center justify-content-between">
                  <div className="d-flex align-items-center mb-2 mb-md-0 me-3">
                     <User className="me-3 text-muted" size={32}/>
@@ -81,15 +76,14 @@ function StudentUploadForm({ student, examId, teacherId, initialFiles }: { stude
                     </div>
                 </div>
                 <form action={formAction} ref={formRef} className="d-flex align-items-center flex-grow-1" style={{minWidth: '320px'}}>
-                    <input type="file" name="papers" className="form-control form-control-sm me-2" multiple onChange={handleFileChange} accept="image/*" />
+                    <input type="file" name="papers" className="form-control form-control-sm me-2" multiple onChange={handleFileChange} accept="image/*" disabled={isAnalysisRunning} />
                     <input type="hidden" name="examId" value={examId} />
                     <input type="hidden" name="studentId" value={student.id} />
                     <input type="hidden" name="teacherId" value={teacherId} />
-                    <button type="submit" className="btn btn-sm btn-primary" disabled={selectedFiles.length === 0}> <Upload size={16}/> </button>
+                    <button type="submit" className="btn btn-sm btn-primary" disabled={selectedFiles.length === 0 || isAnalysisRunning}> <Upload size={16}/> </button>
                 </form>
             </div>
 
-            {/* Status Messages */}
             { (uploadMessage) && (
                 <div key={uploadMessage.key} className={`alert ${uploadMessage.success ? 'alert-success' : 'alert-danger'} small p-2 mt-2`}>{uploadMessage.text}</div>
             )}
@@ -98,14 +92,8 @@ function StudentUploadForm({ student, examId, teacherId, initialFiles }: { stude
             )}
 
             <div className="mt-2 pt-2 border-top">
-                {selectedFiles.length > 0 && (
-                    <div>
-                         <h6 className="small fw-bold">Yüklenecek Dosyalar:</h6>
-                         <ul className="list-unstyled mb-0"> {selectedFiles.map((file, i) => <li key={i} className="small d-flex align-items-center"><Paperclip size={14} className="me-1 text-muted"/> {file.name}</li>)} </ul>
-                    </div>
-                )}
                 {uploadedFiles.length > 0 && (
-                    <div className={selectedFiles.length > 0 ? 'mt-3' : ''}>
+                    <div>
                         <h6 className="small fw-bold">Yüklenmiş Dosyalar:</h6>
                         <ul className="list-unstyled mb-0">
                             {uploadedFiles.map((file) => (
@@ -113,13 +101,13 @@ function StudentUploadForm({ student, examId, teacherId, initialFiles }: { stude
                                     <span className="d-flex align-items-center text-success">
                                         <FileIcon size={14} className="me-2"/> {file.name}
                                     </span>
-                                    <button className="btn btn-sm btn-outline-danger p-0 px-1" onClick={() => handleDeletePaper(file.path)}><Trash2 size={12}/></button>
+                                    <button className="btn btn-sm btn-outline-danger p-0 px-1" onClick={() => handleDeletePaper(file.path)} disabled={isAnalysisRunning}><Trash2 size={12}/></button>
                                 </li>
                             ))}
                         </ul>
                     </div>
                 )}
-                {uploadedFiles.length === 0 && selectedFiles.length === 0 && <p className="small text-muted fst-italic mt-2 mb-0">Bu öğrenci için henüz kağıt yüklenmemiş.</p>}
+                 {uploadedFiles.length === 0 && selectedFiles.length === 0 && <p className="small text-muted fst-italic mt-2 mb-0">Bu öğrenci için henüz kağıt yüklenmemiş.</p>}
             </div>
         </li>
     );
@@ -137,6 +125,7 @@ export default function UploadPage({ params }: { params: { id: string } }) {
   const [analysisState, analysisAction] = useFormState(analyzeExamPapers, { message: '', success: false });
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [displayMessage, setDisplayMessage] = useState({ text: '', success: false, key: 0 });
+  const analysisFormRef = useRef<HTMLFormElement>(null);
 
 
   // --- Data Loading Effect ---
@@ -152,7 +141,6 @@ export default function UploadPage({ params }: { params: { id: string } }) {
             const unsubscribe = onSnapshot(studentsQuery, async (snapshot) => {
               const studentsData: Student[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
               
-              // **YENİ**: Öğrencileri numaralarına göre sayısal olarak sırala
               studentsData.sort((a, b) => {
                   const numA = parseInt(a.studentNumber, 10);
                   const numB = parseInt(b.studentNumber, 10);
@@ -181,18 +169,21 @@ export default function UploadPage({ params }: { params: { id: string } }) {
     } else if (!authLoading) { setLoading(false); }
   }, [user, authLoading, examId]);
 
-  // --- Analysis State Effect ---
+  // --- Analysis State & Submission Effects ---
   useEffect(() => {
+    // Sunucudan analiz sonucu geldiğinde çalışır
     if (analysisState.message) {
-      if (analysisState.success) {
-        setDisplayMessage({ text: analysisState.message, success: true, key: Date.now() });
-      } else {
-        console.error("Sınav Analizi Sunucu Hatası:", analysisState.message);
-        setDisplayMessage({ text: "Analiz başarısız oldu. Teknik detaylar için konsolu kontrol edebilirsiniz.", success: false, key: Date.now() });
-      }
-      setIsAnalyzing(false);
+      setDisplayMessage({ text: analysisState.message, success: analysisState.success, key: Date.now() });
+      setIsAnalyzing(false); // Analizi durdur ve arayüzü aç
     }
   }, [analysisState]);
+  
+  useEffect(() => {
+    // isAnalyzing state'i true olunca formu otomatik gönderir
+    if (isAnalyzing) {
+        analysisFormRef.current?.requestSubmit();
+    }
+  }, [isAnalyzing]);
 
   // --- Analysis Message Timer ---
   useEffect(() => {
@@ -202,10 +193,8 @@ export default function UploadPage({ params }: { params: { id: string } }) {
     }
   }, [displayMessage]);
   
-  const handleAnalysis = (formData: FormData) => {
-    setIsAnalyzing(true);
-    // @ts-ignore
-    analysisAction(formData);
+  const handleAnalysisClick = () => {
+    setIsAnalyzing(true); // Sadece arayüzü kilitle, formu useEffect tetikleyecek
   };
   
   const allFiles = Object.values(initialFiles).flat();
@@ -230,7 +219,7 @@ export default function UploadPage({ params }: { params: { id: string } }) {
             <div className="card-body p-0">
                 <ul className="list-group list-group-flush">
                     {students.length > 0 ? students.map(student => (
-                       <StudentUploadForm key={student.id} student={student} examId={examId} teacherId={user.uid} initialFiles={initialFiles[student.id] || []} />
+                       <StudentUploadForm key={student.id} student={student} examId={examId} teacherId={user.uid} initialFiles={initialFiles[student.id] || []} isAnalysisRunning={isAnalyzing} />
                     )) : <p className="p-4 text-center text-muted">Bu sınava atanmış sınıfta öğrenci bulunmuyor.</p>}
                 </ul>
             </div>
@@ -240,9 +229,9 @@ export default function UploadPage({ params }: { params: { id: string } }) {
             <div className="card-body">
                 <h5 className="card-title d-flex align-items-center"><Wand2 className="me-2"/> Sınav Analizi</h5>
                 <p className="card-text text-muted">Tüm öğrenciler için yüklenen sınav kağıtlarının analizini başlatın. Bu işlem, yapay zeka kullanarak her bir kağıttaki puanları okuyacak ve sonuçları analiz tablolarına otomatik olarak işleyecektir.</p>
-                <form action={handleAnalysis}>
+                <form action={analysisAction} ref={analysisFormRef}>
                     <input type="hidden" name="examId" value={examId} />
-                    <button type="submit" className="btn btn-lg btn-success w-100" disabled={!hasUploadedFiles || isAnalyzing}>
+                    <button type="button" onClick={handleAnalysisClick} className="btn btn-lg btn-success w-100" disabled={!hasUploadedFiles || isAnalyzing}>
                         {isAnalyzing ? (
                             <><Loader2 className="animate-spin me-2" size={20}/> Analiz Ediliyor, Lütfen bekleyin...</>
                         ) : (
