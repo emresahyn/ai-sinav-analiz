@@ -1,14 +1,21 @@
-import { initializeApp, getApps, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import admin from 'firebase-admin';
 
-const serviceAccount = require('../../service-account.json');
+// Ortam değişkeni yoksa veya zaten başlatılmışsa tekrar başlatma
+if (!admin.apps.length) {
+  // Base64 kodlu ortam değişkenini al ve çöz
+  const serviceAccountString = Buffer.from(
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON as string, 
+    'base64'
+  ).toString('utf8');
+  
+  const serviceAccount = JSON.parse(serviceAccountString);
 
-if (!getApps().length) {
-  initializeApp({
-    credential: cert(serviceAccount),
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    // Eğer Storage kullanıyorsanız bu satırı da ekleyin
+    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET 
   });
 }
 
-const dbAdmin = getFirestore();
-
-export { dbAdmin };
+export const adminDb = admin.firestore();
+export const adminStorage = admin.storage();

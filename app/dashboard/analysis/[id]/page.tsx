@@ -1,196 +1,224 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { doc, getDoc, collection, getDocs, setDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase'; // db importu düzeltildi
-import { useAuth } from '@/app/context/AuthContext'; // useAuth importu düzeltildi
+import { useFormState, useFormStatus } from 'react-dom';
+import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { useAuth } from '@/app/context/AuthContext';
 import { toast, Toaster } from 'react-hot-toast';
+import { getStudentScoresForExam, saveStudentScore, analyzeExamPapers } from '@/app/actions';
+import { Loader2, ArrowLeft, Sparkles } from 'lucide-react';
+import Link from 'next/link';
+import { Alert, Button } from 'react-bootstrap';
 
-interface Question {
-  id: string;
-  text: string;
-  answer: string;
-  points: number;
-}
+// --- Tür Tanımları ---
+interface Question { id: string; questionNumber: number; points: number; }
+interface Student { id: string; name: string; studentNumber: string; }
+interface ScoresMap { [key: string]: number | string; }
 
-interface Student {
-  id: string;
-  name: string;
-  studentNumber: string;
-}
+// --- Alt Bileşenler ---
+const SubmitButton = () => {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" disabled={pending} variant="primary" className="w-100">
+      {pending ? <><Loader2 size={16} className="animate-spin me-2" /> Analiz Başladı...</> : <><Sparkles size={16} className="me-2"/> Yapay Zeka ile Doldur</>}
+    </Button>
+  );
+};
 
-interface Score {
-  [studentId: string]: {
-    [questionId: string]: number;
-  };
-}
-
+// --- Ana Bileşen ---
 const AnalysisPage = () => {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const params = useParams();
   const router = useRouter();
-  const examId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const examId = params ? (Array.isArray(params.id) ? params.id[0] : params.id) : null;
 
   const [exam, setExam] = useState<any>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
-  const [scores, setScores] = useState<Score>({});
-  const [loading, setLoading] = useState(true);
+  const [scores, setScores] = useState<ScoresMap>({});
+  const [isPageLoading, setPageLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [analysisState, formAction] = useFormState(analyzeExamPapers, { success: false, message: '' });
+
+  // Verileri sadece bir kere, ilk yüklemede çeken Effect.
+  // Bu yapı, sonsuz döngüyü kesin olarak engeller.
   useEffect(() => {
-    if (!examId || !user) {
-        if(!user){
-            setLoading(false)
-            setError("Bu sayfayı görüntülemek için giriş yapmalısınız.")
-        }
+    if (authLoading) return;
+    if (!user) {
+      router.push('/login');
       return;
     }
 
-    const fetchExamData = async () => {
+    const fetchInitialData = async () => {
+      if (!examId || !user.uid) {
+        setError("Sınav ID veya kullanıcı bilgisi bulunamadı.");
+        setPageLoading(false);
+        return;
+      }
       try {
-        setLoading(true);
-
-        // Yetki kontrolü
         const examRef = doc(db, 'exams', examId);
         const examSnap = await getDoc(examRef);
-        if (!user || !examSnap.exists() || examSnap.data().teacherId !== user.uid) {
-            setError('Sınav bulunamadı veya bu analizi görüntüleme yetkiniz yok.');
-            setLoading(false);
-            return;
+        if (!examSnap.exists() || examSnap.data().teacherId !== user.uid) {
+          setError('Sınav bulunamadı veya bu analizi görüntüleme yetkiniz yok.');
+          return;
         }
-        
         const examData = examSnap.data();
         setExam(examData);
 
-        // Soruları çek
         const questionsRef = collection(db, 'exams', examId, 'questions');
         const questionsSnap = await getDocs(questionsRef);
-        const questionsList = questionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Question[];
+        const questionsList = questionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Question)).sort((a, b) => a.questionNumber - b.questionNumber);
         setQuestions(questionsList);
 
-        // Sınıf öğrencilerini çek
         if (examData.classId) {
           const studentsRef = collection(db, 'classes', examData.classId, 'students');
           const studentsSnap = await getDocs(studentsRef);
-          const studentsList = studentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Student[];
-          setStudents(studentsList);
+          setStudents(studentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student)));
         }
-
-        // Puanları çek
-        const scoresRef = doc(db, 'scores', examId);
-        const scoresSnap = await getDoc(scoresRef);
-        if (scoresSnap.exists()) {
-          setScores(scoresSnap.data() as Score);
+        
+        const scoreResult = await getStudentScoresForExam(examId, user.uid);
+        if (scoreResult.success && scoreResult.scores) {
+          setScores(scoreResult.scores);
         }
-
       } catch (err) {
-        console.error(err);
+        console.error("Veri çekme hatası:", err);
         setError('Veri yüklenirken bir hata oluştu.');
-        toast.error('Veri yüklenirken bir hata oluştu.');
       } finally {
-        setLoading(false);
+        setPageLoading(false);
       }
     };
 
-    fetchExamData();
-  }, [examId, user, router]);
+    if (examId) { 
+        fetchInitialData();
+    }
+  }, [user, authLoading, router, examId]);
+
+  // Sadece yapay zeka analizi bittiğinde çalışır ve sadece skorları günceller.
+  useEffect(() => {
+    if (analysisState?.message) {
+      if (analysisState.success) {
+        toast.success(analysisState.message);
+        // Sadece skorları tekrar çek, tüm sayfayı değil.
+        const refetchScores = async () => {
+            if (!examId || !user?.uid) return;
+            const scoreResult = await getStudentScoresForExam(examId, user.uid);
+            if (scoreResult.success && scoreResult.scores) {
+                setScores(scoreResult.scores);
+            }
+        };
+        refetchScores();
+      } else {
+        toast.error(analysisState.message);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisState]); // Sadece `analysisState` değiştiğinde tetiklenir.
 
   const handleScoreChange = (studentId: string, questionId: string, value: string) => {
-    const points = Number(value);
-    setScores(prev => ({
-      ...prev,
-      [studentId]: {
-        ...prev[studentId],
-        [questionId]: points
-      }
-    }));
+    const key = `${studentId}_${questionId}`;
+    setScores(prevScores => ({ ...prevScores, [key]: value }));
   };
 
-  const saveStudentScore = async (studentId: string, questionId: string) => {
-    const score = scores[studentId]?.[questionId];
+  const handleSaveScore = async (studentId: string, questionId: string) => {
+    if (!user?.uid || !examId) return; // examId kontrolü eklendi
+    const key = `${studentId}_${questionId}`;
+    const scoreValue = scores[key];
+    const score = Number(scoreValue);
     const question = questions.find(q => q.id === questionId);
 
-    if (score === undefined || score < 0 || (question && score > question.points)) {
-        toast.error(`Puan, 0 ile ${question?.points} arasında olmalıdır.`);
+    if (scoreValue === '' || isNaN(score) || score < 0 || (question && score > question.points)) {
+        toast.error(`Puan, 0 ile ${question?.points} arasında geçerli bir sayı olmalıdır.`);
         return;
     }
 
-    try {
-        const scoreRef = doc(db, 'scores', examId);
-        // We use set with merge:true to create or update the document
-        await setDoc(scoreRef, {
-            [studentId]: {
-                [questionId]: score
-            }
-        }, { merge: true });
-        toast.success('Puan kaydedildi!');
-    } catch (error) {
-        console.error("Puan kaydedilirken hata:", error);
-        toast.error('Puan kaydedilirken bir hata oluştu.');
+    const formData = new FormData();
+    formData.append('examId', examId);
+    formData.append('studentId', studentId);
+    formData.append('questionId', questionId);
+    formData.append('teacherId', user.uid);
+    formData.append('score', String(score));
+
+    const result = await saveStudentScore(formData);
+    if (!result.success) {
+        toast.error(result.message || 'Puan kaydedilemedi.');
     }
   };
 
-
-  if (loading) {
-    return <div className="d-flex justify-content-center align-items-center" style={{ height: '80vh' }}><div className="spinner-border text-primary" role="status"><span className="visually-hidden">Yükleniyor...</span></div></div>;
+  if (isPageLoading) {
+    return <div className="d-flex vh-100 align-items-center justify-content-center"><Loader2 className="animate-spin h-8 w-8 text-primary" /> <span className="ms-3 fs-5 text-muted">Analiz Sayfası Yükleniyor...</span></div>;
   }
 
-  if (error) {
-    return <div className="alert alert-danger m-4">{error}</div>;
-  }
-
-  if (!exam) {
-    return <div className="alert alert-warning m-4">Sınav bilgileri yüklenemedi.</div>;
-  }
+  if (error) { return <Alert variant="danger" className="m-4">{error}</Alert>; }
 
   return (
     <div className="container-fluid p-4">
-        <Toaster position="bottom-right" />
-        <div className="border-bottom pb-3 mb-4">
-            <h1 className="h2">{exam.title} - Puan Analizi</h1>
-            <p className="text-muted">Öğrencilerinize ait sınav puanlarını girin ve kaydedin.</p>
+      <Toaster position="bottom-right" />
+      <header className="border-bottom pb-3 mb-4">
+        <div className="d-flex justify-content-between align-items-center flex-wrap gap-3">
+          <div>
+            <Link href={`/dashboard/exams/${examId}`} className="btn btn-outline-secondary mb-3">
+              <ArrowLeft size={16} className="me-2"/> Sınav Detayına Dön
+            </Link>
+            <h1 className="h2">{exam?.title} - Puan Analizi</h1>
+            <p className="text-muted mb-0">Puanları manuel girin veya yapay zeka ile otomatik doldurun.</p>
+          </div>
+          <form action={formAction} className="flex-grow-1 flex-md-grow-0" style={{maxWidth: '300px'}}>
+            <input type="hidden" name="examId" value={examId || ''} />
+            <SubmitButton />
+          </form>
         </div>
-        
-        <div className="table-responsive"> 
-            <table className="table table-bordered table-hover">
-                <thead className="table-light">
-                    <tr>
-                        <th scope="col" className='bg-light'>Öğrenci Adı</th>
-                        {questions.map(q => (
-                            <th key={q.id} scope="col" className="text-center">
-                                Soru {questions.indexOf(q) + 1}
-                                <br/>
-                                <small className="fw-normal text-muted">({q.points} Puan)</small>
-                            </th>
-                        ))}
-                    </tr>
-                </thead>
-                <tbody>
-                    {students.map(student => (
-                        <tr key={student.id}>
-                            <td className='bg-light font-weight-bold'>{student.name}</td>
-                            {questions.map(q => (
-                                <td key={q.id}>
-                                    <div className="input-group">
-                                        <input 
-                                            type="number"
-                                            className="form-control form-control-sm"
-                                            value={scores[student.id]?.[q.id] || ''}
-                                            onChange={(e) => handleScoreChange(student.id, q.id, e.target.value)}
-                                            onBlur={() => saveStudentScore(student.id, q.id)}
-                                            min="0"
-                                            max={q.points}
-                                        />
-                                    </div>
+      </header>
+      
+      <div className="table-responsive">
+        <table className="table table-bordered table-hover">
+          <thead className="table-light">
+            <tr>
+              <th scope="col" style={{ position: 'sticky', left: 0, zIndex: 1, backgroundColor: '#f8f9fa' }}>Öğrenci Adı</th>
+              {questions.map(q => (
+                <th key={q.id} scope="col" className="text-center text-nowrap">
+                  Soru {q.questionNumber} <small className="fw-normal text-muted">({q.points}p)</small>
+                </th>
+              ))}
+              <th scope="col" className="text-center text-nowrap">Toplam Puan</th>
+            </tr>
+          </thead>
+          <tbody>
+            {students.length === 0 ? (
+                <tr><td colSpan={questions.length + 2} className="text-center p-5">Bu sınıfa henüz öğrenci eklenmemiş.</td></tr>
+            ) : ( 
+                students.map(student => {
+                    const totalScore = questions.reduce((acc, q) => acc + Number(scores[`${student.id}_${q.id}`] || 0), 0);
+                    return (
+                      <tr key={student.id}>
+                        <td style={{ position: 'sticky', left: 0, zIndex: 1, backgroundColor: '#fff', fontWeight: '500' }}>{student.name}</td>
+                        {questions.map(q => {
+                            const key = `${student.id}_${q.id}`;
+                            return (
+                                <td key={q.id} className="align-middle">
+                                    <input
+                                        type="number"
+                                        className="form-control form-control-sm text-center border-0 bg-light"
+                                        value={scores[key] ?? ''}
+                                        onChange={(e) => handleScoreChange(student.id, q.id, e.target.value)}
+                                        onBlur={() => handleSaveScore(student.id, q.id)}
+                                        min="0"
+                                        max={q.points}
+                                        style={{minWidth: '60px'}}
+                                    />
                                 </td>
-                            ))}
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
+                            );
+                        })}
+                        <td className="text-center fw-bold align-middle">{totalScore}</td>
+                      </tr>
+                    )
+                })
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };

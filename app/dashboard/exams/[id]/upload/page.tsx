@@ -6,9 +6,9 @@ import { useFormState } from 'react-dom';
 import { doc, getDoc, collection, query, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/app/context/AuthContext';
-import { Loader2, ArrowLeft, Upload, User, Paperclip, Check, AlertCircle, Trash2, File as FileIcon } from 'lucide-react';
+import { Loader2, ArrowLeft, Upload, User, Paperclip, AlertCircle, Trash2, File as FileIcon, Wand2 } from 'lucide-react';
 import Link from 'next/link';
-import { uploadExamPaper, getUploadedPapers, deleteExamPaper } from '@/app/actions';
+import { uploadExamPaper, getUploadedPapers, deleteExamPaper, analyzeExamPapers } from '@/app/actions';
 
 // --- Type Definitions --- //
 interface ExamData { title: string; classId?: string; }
@@ -50,7 +50,7 @@ function StudentUploadForm({ student, examId, teacherId, initialFiles }: { stude
         <li className="list-group-item">
             <div className="d-flex flex-wrap align-items-center justify-content-between">
                  <div className="d-flex align-items-center mb-2 mb-md-0 me-3">
-                    <User className="me-3 text-muted" size={32}/> 
+                    <User className="me-3 text-muted" size={32}/>
                     <div>
                         <div className="fw-bold">{student.name}</div>
                         <div className="small text-muted">{student.studentNumber}</div>
@@ -72,7 +72,7 @@ function StudentUploadForm({ student, examId, teacherId, initialFiles }: { stude
             { (deleteMessage) && (
                 <div className={`alert ${deleteMessage.success ? 'alert-success' : 'alert-danger'} small p-2 mt-2`}>{deleteMessage.text}</div>
             )}
-            
+
             <div className="mt-2 pt-2 border-top">
                 {selectedFiles.length > 0 && (
                     <div>
@@ -109,7 +109,13 @@ export default function UploadPage({ params }: { params: { id: string } }) {
   const [initialFiles, setInitialFiles] = useState<StudentFiles>({});
   const [loading, setLoading] = useState(true);
   const examId = params.id;
+  
+  const [analysisState, analysisAction] = useFormState(analyzeExamPapers, { message: '', success: false });
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [displayMessage, setDisplayMessage] = useState({ text: '', success: false, key: 0 });
 
+
+  // --- Data Loading Effect ---
   useEffect(() => {
     if (user) {
       const examDocRef = doc(db, 'exams', examId);
@@ -125,7 +131,7 @@ export default function UploadPage({ params }: { params: { id: string } }) {
 
               const filePromises = studentsData.map(s => getUploadedPapers(examId, s.id));
               const filesResults = await Promise.all(filePromises);
-              
+
               const filesByStudent: StudentFiles = {};
               filesResults.forEach((result, index) => {
                   if(result.success) filesByStudent[studentsData[index].id] = result.files || [];
@@ -139,6 +145,32 @@ export default function UploadPage({ params }: { params: { id: string } }) {
       });
     } else if (!authLoading) { setLoading(false); }
   }, [user, authLoading, examId]);
+
+  // --- Analysis State Effect (NEW) ---
+  useEffect(() => {
+    // Only run if a message is returned from the server action
+    if (analysisState.message) {
+      if (analysisState.success) {
+        // On success, show the success message from the server
+        setDisplayMessage({ text: analysisState.message, success: true, key: Date.now() });
+      } else {
+        // On failure, log the detailed error to the console
+        console.error("Sınav Analizi Sunucu Hatası:", analysisState.message);
+        // Show a generic, user-friendly error message in the UI
+        setDisplayMessage({ text: "Analiz başarısız oldu. Teknik detaylar için F12 tuşuna basıp konsolu kontrol edebilirsiniz.", success: false, key: Date.now() });
+      }
+      setIsAnalyzing(false); // Stop the loading spinner regardless of outcome
+    }
+  }, [analysisState]);
+  
+  const handleAnalysis = (formData: FormData) => {
+    setIsAnalyzing(true);
+    // @ts-ignore
+    analysisAction(formData);
+  };
+  
+  const allFiles = Object.values(initialFiles).flat();
+  const hasUploadedFiles = allFiles.length > 0;
 
   if (loading || authLoading) {
     return <div className="d-flex vh-100 align-items-center justify-content-center"><Loader2 className="animate-spin h-8 w-8 text-primary" /> <span className="ms-3 fs-5 text-muted">Öğrenciler ve dosyalar yükleniyor...</span></div>;
@@ -164,6 +196,31 @@ export default function UploadPage({ params }: { params: { id: string } }) {
                 </ul>
             </div>
         </div>
+
+        <div className="card shadow-sm mt-4">
+            <div className="card-body">
+                <h5 className="card-title d-flex align-items-center"><Wand2 className="me-2"/> Sınav Analizi</h5>
+                <p className="card-text text-muted">Tüm öğrenciler için yüklenen sınav kağıtlarının analizini başlatın. Bu işlem, yapay zeka kullanarak her bir kağıttaki puanları okuyacak ve sonuçları analiz tablolarına otomatik olarak işleyecektir.</p>
+                <form action={handleAnalysis}>
+                    <input type="hidden" name="examId" value={examId} />
+                    <button type="submit" className="btn btn-lg btn-success w-100" disabled={!hasUploadedFiles || isAnalyzing}>
+                        {isAnalyzing ? (
+                            <><Loader2 className="animate-spin me-2" size={20}/> Analiz Ediliyor, Lütfen bekleyin...</>
+                        ) : (
+                            <>Analizi Başlat</>
+                        )}
+                    </button>
+                </form>
+                {/* --- MODIFIED/NEW Display Logic --- */}
+                {displayMessage.text && (
+                    <div key={displayMessage.key} className={`d-flex align-items-center alert ${displayMessage.success ? 'alert-success' : 'alert-danger'} mt-3`}>
+                        <AlertCircle className="me-2"/>
+                        {displayMessage.text}
+                    </div>
+                )}
+            </div>
+        </div>
+
     </div>
   );
 }

@@ -6,7 +6,6 @@ import { useFormStatus, useFormState } from 'react-dom';
 import { collection, doc, onSnapshot, query, orderBy, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/app/context/AuthContext';
-import { addAcquisition } from '@/app/actions';
 import { uploadExamPaper, uploadAnswerKey } from '@/app/upload-action';
 import { runAnalysis } from '@/app/analysis-action';
 import { Loader2, AlertCircle, ArrowLeft, Wand2, CheckCircle, FileCheck, FileWarning, Upload } from 'lucide-react';
@@ -99,10 +98,6 @@ export default function ExamDetailClientPage({ id }: { id: string }) {
     const [pageState, setPageState] = useState<'loading' | 'error' | 'success'>('loading');
     const [errorMessage, setErrorMessage] = useState<string>('');
 
-    // Form Durumu
-    const [addAcqState, addAcqAction] = useFormState(addAcquisition, { message: '', success: false });
-    const addAcqFormRef = useRef<HTMLFormElement>(null);
-
     // Ana Veri Yükleme useEffect'i
     useEffect(() => {
         // Gerekli olan id veya user yoksa, hiçbir şey yapma.
@@ -168,9 +163,6 @@ export default function ExamDetailClientPage({ id }: { id: string }) {
         }
     }, [selectedClass]);
     
-    // Formu sıfırlama useEffect'i
-    useEffect(() => { if (addAcqState.success) addAcqFormRef.current?.reset(); }, [addAcqState]);
-
     // --- RENDER KISMI ---
     if (pageState === 'loading' || authLoading) {
         return <div className="flex h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600"/> <span className="ml-4 text-slate-600">Yükleniyor...</span></div>;

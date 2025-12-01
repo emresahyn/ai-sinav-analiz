@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@google-cloud/vision": "^5.3.4",
     "@google/generative-ai": "^0.24.1",
     "@opentelemetry/api": "^1.9.0",
     "@tailwindcss/postcss": "^4.1.17",
@@ -18,12 +19,14 @@
     "lucide-react": "^0.395.0",
     "next": "^14.2.33",
     "react": "18.3.1",
+    "react-bootstrap": "^2.10.10",
     "react-dom": "18.3.1",
     "react-hot-toast": "^2.6.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/node-fetch": "^2.6.13",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "autoprefixer": "^10.4.19",

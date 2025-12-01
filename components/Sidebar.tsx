@@ -35,7 +35,7 @@ export default function Sidebar() {
       <hr/>
       <ul className="nav nav-pills flex-column mb-auto">
         {menuItems.map((item) => {
-          const isActive = pathname.startsWith(item.href) && (item.href !== '/dashboard' || pathname === '/dashboard');
+          const isActive = pathname ? pathname.startsWith(item.href) && (item.href !== '/dashboard' || pathname === '/dashboard') : false;
           return (
             <li className="nav-item" key={item.name}>
               <Link href={item.href} className={`nav-link text-white d-flex align-items-center ${isActive ? 'active' : ''}`}>
