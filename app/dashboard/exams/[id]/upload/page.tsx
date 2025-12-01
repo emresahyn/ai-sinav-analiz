@@ -21,27 +21,51 @@ function StudentUploadForm({ student, examId, teacherId, initialFiles }: { stude
     const [uploadState, formAction] = useFormState(uploadExamPaper, { message: '', success: false, studentId: student.id, uploadedFiles: [] });
     const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
     const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>(initialFiles);
-    const [deleteMessage, setDeleteMessage] = useState<{text: string, success: boolean} | null>(null);
+    const [deleteMessage, setDeleteMessage] = useState<{text: string, success: boolean, key: number} | null>(null);
+    const [uploadMessage, setUploadMessage] = useState<{text: string, success: boolean, key: number} | null>(null);
     const formRef = useRef<HTMLFormElement>(null);
 
+    // Sunucudan gelen yükleme sonucunu yakala ve geçici mesajı ayarla
     useEffect(() => {
-        if (uploadState.success && uploadState.studentId === student.id) {
-            setUploadedFiles(prev => [...prev, ...uploadState.uploadedFiles!]);
-            setSelectedFiles([]);
-            formRef.current?.reset();
+        if (uploadState.message && uploadState.studentId === student.id) {
+            // State'i güncelle
+            if(uploadState.success) {
+                setUploadedFiles(prev => [...prev, ...uploadState.uploadedFiles!]);
+                setSelectedFiles([]);
+                formRef.current?.reset();
+            }
+            // Geçici mesajı ayarla
+            setUploadMessage({ text: uploadState.message, success: uploadState.success, key: Date.now() });
         }
     }, [uploadState]);
+
+    // Yükleme mesajını 5 saniye sonra temizle
+    useEffect(() => {
+        if (uploadMessage) {
+            const timer = setTimeout(() => setUploadMessage(null), 5000);
+            return () => clearTimeout(timer);
+        }
+    }, [uploadMessage]);
+
+    // Silme mesajını 5 saniye sonra temizle
+    useEffect(() => {
+        if (deleteMessage) {
+            const timer = setTimeout(() => setDeleteMessage(null), 5000);
+            return () => clearTimeout(timer);
+        }
+    }, [deleteMessage]);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) setSelectedFiles(Array.from(e.target.files));
     };
 
-    const handleDeletePaper = async (filePath: string) => {
-        if (confirm(`'${filePath.split('/').pop()}' dosyasını silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.`)) {
-            const result = await deleteExamPaper(examId, teacherId, filePath);
-            setDeleteMessage({ text: result.message, success: result.success });
+    const handleDeletePaper = async (paperId: string) => {
+        const fileName = uploadedFiles.find(f => f.path === paperId)?.name || 'bu dosyayı';
+        if (confirm(`'${fileName}' silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.`)) {
+            const result = await deleteExamPaper(examId, teacherId, paperId);
+            setDeleteMessage({ text: result.message, success: result.success, key: Date.now() });
             if (result.success) {
-                setUploadedFiles(prev => prev.filter(f => f.path !== filePath));
+                setUploadedFiles(prev => prev.filter(f => f.path !== paperId));
             }
         }
     };
@@ -57,7 +81,7 @@ function StudentUploadForm({ student, examId, teacherId, initialFiles }: { stude
                     </div>
                 </div>
                 <form action={formAction} ref={formRef} className="d-flex align-items-center flex-grow-1" style={{minWidth: '320px'}}>
-                    <input type="file" name="papers" className="form-control form-control-sm me-2" multiple onChange={handleFileChange} />
+                    <input type="file" name="papers" className="form-control form-control-sm me-2" multiple onChange={handleFileChange} accept="image/*" />
                     <input type="hidden" name="examId" value={examId} />
                     <input type="hidden" name="studentId" value={student.id} />
                     <input type="hidden" name="teacherId" value={teacherId} />
@@ -66,29 +90,29 @@ function StudentUploadForm({ student, examId, teacherId, initialFiles }: { stude
             </div>
 
             {/* Status Messages */}
-            { (uploadState.message && uploadState.studentId === student.id) && (
-                <div className={`alert ${uploadState.success ? 'alert-success' : 'alert-danger'} small p-2 mt-2`}>{uploadState.message}</div>
+            { (uploadMessage) && (
+                <div key={uploadMessage.key} className={`alert ${uploadMessage.success ? 'alert-success' : 'alert-danger'} small p-2 mt-2`}>{uploadMessage.text}</div>
             )}
             { (deleteMessage) && (
-                <div className={`alert ${deleteMessage.success ? 'alert-success' : 'alert-danger'} small p-2 mt-2`}>{deleteMessage.text}</div>
+                <div key={deleteMessage.key} className={`alert ${deleteMessage.success ? 'alert-success' : 'alert-danger'} small p-2 mt-2`}>{deleteMessage.text}</div>
             )}
 
             <div className="mt-2 pt-2 border-top">
                 {selectedFiles.length > 0 && (
                     <div>
                          <h6 className="small fw-bold">Yüklenecek Dosyalar:</h6>
-                         <ul className="list-unstyled"> {selectedFiles.map((file, i) => <li key={i} className="small d-flex align-items-center"><Paperclip size={14} className="me-1 text-muted"/> {file.name}</li>)} </ul>
+                         <ul className="list-unstyled mb-0"> {selectedFiles.map((file, i) => <li key={i} className="small d-flex align-items-center"><Paperclip size={14} className="me-1 text-muted"/> {file.name}</li>)} </ul>
                     </div>
                 )}
                 {uploadedFiles.length > 0 && (
-                    <div>
-                        <h6 className="small fw-bold mt-2">Yüklenmiş Dosyalar:</h6>
-                        <ul className="list-unstyled">
+                    <div className={selectedFiles.length > 0 ? 'mt-3' : ''}>
+                        <h6 className="small fw-bold">Yüklenmiş Dosyalar:</h6>
+                        <ul className="list-unstyled mb-0">
                             {uploadedFiles.map((file) => (
                                 <li key={file.path} className="small d-flex align-items-center justify-content-between">
-                                    <a href={file.path} target="_blank" rel="noopener noreferrer" className="d-flex align-items-center">
-                                        <FileIcon size={14} className="me-1 text-success"/> {file.name}
-                                    </a>
+                                    <span className="d-flex align-items-center text-success">
+                                        <FileIcon size={14} className="me-2"/> {file.name}
+                                    </span>
                                     <button className="btn btn-sm btn-outline-danger p-0 px-1" onClick={() => handleDeletePaper(file.path)}><Trash2 size={12}/></button>
                                 </li>
                             ))}
@@ -127,6 +151,17 @@ export default function UploadPage({ params }: { params: { id: string } }) {
             const studentsQuery = query(collection(db, `classes/${exam.classId}/students`));
             const unsubscribe = onSnapshot(studentsQuery, async (snapshot) => {
               const studentsData: Student[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
+              
+              // **YENİ**: Öğrencileri numaralarına göre sayısal olarak sırala
+              studentsData.sort((a, b) => {
+                  const numA = parseInt(a.studentNumber, 10);
+                  const numB = parseInt(b.studentNumber, 10);
+                  if (isNaN(numA) && isNaN(numB)) return a.studentNumber.localeCompare(b.studentNumber);
+                  if (isNaN(numA)) return 1;
+                  if (isNaN(numB)) return -1;
+                  return numA - numB;
+              });
+
               setStudents(studentsData);
 
               const filePromises = studentsData.map(s => getUploadedPapers(examId, s.id));
@@ -146,22 +181,26 @@ export default function UploadPage({ params }: { params: { id: string } }) {
     } else if (!authLoading) { setLoading(false); }
   }, [user, authLoading, examId]);
 
-  // --- Analysis State Effect (NEW) ---
+  // --- Analysis State Effect ---
   useEffect(() => {
-    // Only run if a message is returned from the server action
     if (analysisState.message) {
       if (analysisState.success) {
-        // On success, show the success message from the server
         setDisplayMessage({ text: analysisState.message, success: true, key: Date.now() });
       } else {
-        // On failure, log the detailed error to the console
         console.error("Sınav Analizi Sunucu Hatası:", analysisState.message);
-        // Show a generic, user-friendly error message in the UI
-        setDisplayMessage({ text: "Analiz başarısız oldu. Teknik detaylar için F12 tuşuna basıp konsolu kontrol edebilirsiniz.", success: false, key: Date.now() });
+        setDisplayMessage({ text: "Analiz başarısız oldu. Teknik detaylar için konsolu kontrol edebilirsiniz.", success: false, key: Date.now() });
       }
-      setIsAnalyzing(false); // Stop the loading spinner regardless of outcome
+      setIsAnalyzing(false);
     }
   }, [analysisState]);
+
+  // --- Analysis Message Timer ---
+  useEffect(() => {
+    if (displayMessage.text) {
+        const timer = setTimeout(() => setDisplayMessage({ text: '', success: false, key: 0 }), 5000);
+        return () => clearTimeout(timer);
+    }
+  }, [displayMessage]);
   
   const handleAnalysis = (formData: FormData) => {
     setIsAnalyzing(true);
@@ -211,7 +250,6 @@ export default function UploadPage({ params }: { params: { id: string } }) {
                         )}
                     </button>
                 </form>
-                {/* --- MODIFIED/NEW Display Logic --- */}
                 {displayMessage.text && (
                     <div key={displayMessage.key} className={`d-flex align-items-center alert ${displayMessage.success ? 'alert-success' : 'alert-danger'} mt-3`}>
                         <AlertCircle className="me-2"/>

@@ -6,7 +6,7 @@ import { adminDb } from '@/lib/firebase/admin';
 import { revalidatePath } from 'next/cache';
 import { promises as fs } from 'fs';
 import path from 'path';
-// YENİ VE DOĞRU İÇE AKTARMA
+import os from 'os';
 import { analyzeImageFromFile } from '@/lib/vision';
 
 // --- Helper --- //
@@ -178,34 +178,39 @@ export async function deleteExam(examId: string, teacherId: string) {
     if (!await verifyOwnership('exams', examId, teacherId)) return { message: 'Bu işlem için yetkiniz yok.', success: false };
 
     try {
+        const batch = adminDb.batch();
+        
+        // Sınava ait skorları sil
         const scoresQuery = adminDb.collection('scores').where('examId', '==', examId).where('teacherId', '==', teacherId);
         const scoresSnapshot = await scoresQuery.get();
-        const batch = adminDb.batch();
         scoresSnapshot.forEach(doc => batch.delete(doc.ref));
-        await batch.commit();
-
+        
+        // Sınava ait soruları sil
         const questionsQuery = adminDb.collection('exams').doc(examId).collection('questions');
         const questionsSnapshot = await questionsQuery.get();
-        const questionsBatch = adminDb.batch();
-        questionsSnapshot.forEach(doc => questionsBatch.delete(doc.ref));
-        await questionsBatch.commit();
+        questionsSnapshot.forEach(doc => batch.delete(doc.ref));
+        
+        // **YENİ**: Sınava ait tüm kağıtları veritabanından sil
+        const papersQuery = adminDb.collection('exams').doc(examId).collection('papers');
+        const papersSnapshot = await papersQuery.get();
+        papersSnapshot.forEach(doc => batch.delete(doc.ref));
 
+        // Ana sınav dökümanını sil
         const examRef = adminDb.collection('exams').doc(examId);
-        await examRef.delete();
-
-        const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'exams', examId);
-        await fs.rm(uploadDir, { recursive: true, force: true });
+        batch.delete(examRef);
+        
+        await batch.commit();
 
         revalidatePath('/dashboard/exams');
         revalidatePath('/dashboard/analysis');
-        return { message: 'Sınav ve ilişkili tüm veriler başarıyla silindi.', success: true };
+        return { message: 'Sınav ve ilişkili tüm veriler (sorular, skorlar, kağıtlar) başarıyla silindi.', success: true };
     } catch (error: any) {
         console.error(`Sınav silme hatası (ID: ${examId}):`, error);
         return { message: `Sınav silinirken bir hata oluştu: ${error.message}`, success: false };
     }
 }
 
-// --- Exam Paper Actions --- //
+// --- Exam Paper Actions (VERİTABANI ODAKLI) --- //
 const PaperUploadSchema = z.object({
     examId: z.string().min(1),
     studentId: z.string().min(1),
@@ -222,60 +227,72 @@ export async function uploadExamPaper(prevState: any, formData: FormData) {
     if (!await verifyOwnership('exams', examId, teacherId)) return { message: 'Bu işlem için yetkiniz yok.', success: false, studentId };
     if (!papers || papers.length === 0 || papers[0].name === 'undefined') return { message: 'Yüklenecek dosya seçilmedi.', success: false, studentId };
     
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'exams', examId, studentId);
-    try {
-        await fs.mkdir(uploadDir, { recursive: true });
-    } catch (error: any) {
-        return { message: `Klasör oluşturulamadı: ${error.message}`, success: false, studentId };
-    }
+    const papersCollectionRef = adminDb.collection('exams').doc(examId).collection('papers');
 
     const uploadPromises = papers.map(async (paper) => {
+        // Dosyayı Base64'e çevir
         const bytes = await paper.arrayBuffer();
         const buffer = Buffer.from(bytes);
-        const filePath = path.join(uploadDir, paper.name);
-        await fs.writeFile(filePath, buffer);
-        return { name: paper.name, path: `/uploads/exams/${examId}/${studentId}/${paper.name}` };
+        const base64Data = buffer.toString('base64');
+
+        // Veritabanına kaydet
+        const docRef = await papersCollectionRef.add({
+            studentId,
+            teacherId,
+            fileName: paper.name,
+            fileType: paper.type,
+            createdAt: new Date(),
+            base64Data, // Base64 verisini doğrudan kaydet
+        });
+        
+        // Arayüzde kullanılmak üzere doküman ID'sini ve adını döndür
+        return { name: paper.name, path: docRef.id };
     });
 
     try {
         const results = await Promise.all(uploadPromises);
         revalidatePath(`/dashboard/exams/${examId}/upload`);
         return { 
-            message: `${results.length} dosya başarıyla yüklendi.`, 
+            message: `${results.length} resim dosyası başarıyla veritabanına kaydedildi.`, 
             success: true, 
             studentId,
-            uploadedFiles: results
+            uploadedFiles: results // Arayüzün state'i güncellemesi için
         };
     } catch (error: any) {
-        return { message: `Dosya yükleme hatası: ${error.message}`, success: false, studentId };
+        return { message: `Veritabanına resim kaydetme hatası: ${error.message}`, success: false, studentId };
     }
 }
 
 export async function getUploadedPapers(examId: string, studentId: string) {
-    const dirPath = path.join(process.cwd(), 'public', 'uploads', 'exams', examId, studentId);
     try {
-        await fs.access(dirPath);
-        const files = await fs.readdir(dirPath);
-        const fileDetails = files.map(file => ({ name: file, path: `/uploads/exams/${examId}/${studentId}/${file}` }));
+        const papersQuery = adminDb.collection('exams').doc(examId).collection('papers').where('studentId', '==', studentId);
+        const snapshot = await papersQuery.get();
+        if (snapshot.empty) {
+            return { success: true, files: [] };
+        }
+        
+        const fileDetails = snapshot.docs.map(doc => ({
+            name: doc.data().fileName,
+            path: doc.id // Arayüzde silme ve görüntüleme için doküman ID'sini kullan
+        }));
+        
         return { success: true, files: fileDetails };
     } catch (error) {
-        return { success: true, files: [] };
+        console.error("Get uploaded papers error:", error);
+        return { success: true, files: [] }; // Hata durumunda bile arayüzün çökmemesi için boş döner
     }
 }
 
-export async function deleteExamPaper(examId: string, teacherId: string, filePath: string) {
+export async function deleteExamPaper(examId: string, teacherId: string, paperId: string) { // filePath yerine paperId
     if (!await verifyOwnership('exams', examId, teacherId)) return { message: 'Bu işlem için yetkiniz yok.', success: false };
     
-    const fullPath = path.join(process.cwd(), 'public', filePath);
     try {
-        await fs.unlink(fullPath);
+        const paperRef = adminDb.collection('exams').doc(examId).collection('papers').doc(paperId);
+        await paperRef.delete();
+        
         revalidatePath(`/dashboard/exams/${examId}/upload`);
-        return { message: 'Dosya başarıyla silindi.', success: true };
+        return { message: 'Dosya başarıyla veritabanından silindi.', success: true };
     } catch (error: any) {
-        if (error.code === 'ENOENT') {
-            revalidatePath(`/dashboard/exams/${examId}/upload`);
-            return { message: 'Dosya zaten mevcut değil.', success: true };
-        }
         return { message: `Dosya silinirken hata: ${error.message}`, success: false };
     }
 }
@@ -339,46 +356,35 @@ export async function deleteQuestionFromExam(examId: string, questionId: string,
     }
 }
 
-// --- Analysis Actions (SON DÜZELTME) --- //
-
+// --- Analysis Actions (VERİTABANI ODAKLI) --- //
 export async function analyzeExamPapers(prevState: any, formData: FormData) {
-    console.log("\n--- YENİ SINAV ANALİZİ BAŞLADI ---");
+    console.log("\n--- VERİTABANI ODAKLI SINAV ANALİZİ BAŞLADI ---");
     const AnalysisSchema = z.object({ examId: z.string().min(1) });
     const validatedFields = AnalysisSchema.safeParse(Object.fromEntries(formData));
     if (!validatedFields.success) {
-        console.error("Analiz Başarısız: Geçersiz Sınav ID.");
         return { message: 'Geçersiz Sınav ID.', success: false };
     }
     const { examId } = validatedFields.data;
-    console.log(`Sınav ID doğrulandı: ${examId}`);
 
-    console.log("Sınav bilgileri ve yetki kontrolü yapılıyor...");
     const examRef = adminDb.collection('exams').doc(examId);
     const examDoc = await examRef.get();
     if (!examDoc.exists) {
-        console.error(`Hata: Sınav bulunamadı (ID: ${examId})`);
         return { message: 'Sınav bulunamadı.', success: false };
     }
     const { teacherId, classId } = examDoc.data() as { teacherId: string; classId: string };
-    console.log(`Sınav bilgileri alındı: Sınıf ID ${classId}, Öğretmen ID ${teacherId}`);
 
     if (!teacherId || !classId) {
-        console.error("Hata: Sınav bilgileri eksik (öğretmen veya sınıf ID bulunamadı).");
-        return { message: 'Sınav bilgileri eksik.', success: false };
+        return { message: 'Sınav bilgileri eksik (öğretmen veya sınıf ID bulunamadı).', success: false };
     }
 
     try {
-        console.log("Sınıftaki öğrenciler ve sınavdaki sorular veritabanından çekiliyor...");
         const studentsSnapshot = await adminDb.collection('classes').doc(classId).collection('students').get();
         const students = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as { name: string }) }));
-        console.log(`${students.length} öğrenci bulundu.`);
 
         const questionsSnapshot = await examRef.collection('questions').orderBy('questionNumber').get();
         const questions = questionsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as { points: number; questionNumber: number } }));
-        console.log(`${questions.length} soru bulundu.`);
 
         if (questions.length === 0) {
-            console.warn("Analiz durduruldu: Sınavda hiç soru tanımlanmamış.");
             return { message: 'Sınavda hiç soru tanımlanmamış. Analiz yapılamaz.', success: false };
         }
 
@@ -386,92 +392,77 @@ export async function analyzeExamPapers(prevState: any, formData: FormData) {
         let totalScoresSaved = 0;
         const batch = adminDb.batch();
 
-        console.log("--- Öğrenci Kağıtlarını İşleme Döngüsü Başladı ---");
         for (const student of students) {
-            console.log(`\n-> İşleniyor: Öğrenci ${student.name || student.id}`);
-            const uploadedPapers = await getUploadedPapers(examId, student.id);
-            if (!uploadedPapers.success || uploadedPapers.files.length === 0) {
+            const papersSnapshot = await adminDb.collection('exams').doc(examId).collection('papers').where('studentId', '==', student.id).get();
+            if (papersSnapshot.empty) {
                 console.log(`  - ${student.name || student.id} için yüklü kağıt bulunamadı. Atlanıyor.`);
                 continue;
             }
 
             processedStudentCount++;
-            console.log(`  - ${uploadedPapers.files.length} adet kağıt bulundu. Analiz edilecek.`);
+            
+            for (const paperDoc of papersSnapshot.docs) {
+                const paperData = paperDoc.data();
+                const base64Data = paperData.base64Data;
+                if (!base64Data) continue;
 
-            for (const paper of uploadedPapers.files) {
-                if (!paper.path) continue;
+                const tempPath = path.join(os.tmpdir(), `${paperDoc.id}.jpeg`);
                 
-                // YENİ YÖNTEM: Dosyanın tam fiziksel yolunu oluşturuyoruz.
-                const physicalPath = path.join(process.cwd(), 'public', paper.path);
-                console.log(`    - Kağıt analiz ediliyor: ${physicalPath}`);
-                
-                console.log("    - Yapay zeka (Gemini) çağrılıyor (Dosya ile)...");
-                // YENİ YÖNTEM: Yapay zekaya URL yerine dosya yolunu veriyoruz.
-                const analysisResult = await analyzeImageFromFile(physicalPath);
+                try {
+                    const buffer = Buffer.from(base64Data, 'base64');
+                    await fs.writeFile(tempPath, buffer);
+                    
+                    const analysisResult = await analyzeImageFromFile(tempPath);
 
-                if (!analysisResult.success) {
-                    const errorMessage = `      * YZ Hatası: ${analysisResult.message}`;
-                    console.error(errorMessage);
-                    continue;
-                }
-
-                const detectedScores = analysisResult.scores || [];
-                console.log(`    - Yapay zeka sonucu alındı: [${detectedScores.join(', ')}]`);
-
-                if (detectedScores.length === 0) {
-                    console.log("      - Bu kağıtta okunabilir puan bulunamadı.");
-                    continue;
-                }
-
-                console.log(`      - ${detectedScores.length} adet puan bulundu. Veritabanına işleniyor...`);
-                for (let i = 0; i < questions.length; i++) {
-                    if (detectedScores[i] !== undefined) {
-                        const question = questions[i];
-                        const score = Math.min(detectedScores[i], question.points);
-                        totalScoresSaved++;
-                        
-                        const scoreRef = adminDb.collection('scores').doc(`${examId}_${student.id}_${question.id}`);
-                        batch.set(scoreRef, {
-                            examId, studentId: student.id, questionId: question.id,
-                            score: score, teacherId, updatedAt: new Date()
-                        }, { merge: true });
-                        console.log(`        - Soru ${question.questionNumber} için puan ${score} olarak kaydedildi.`);
+                    if (!analysisResult.success) {
+                        console.error(`YZ Hatası: ${analysisResult.message}`);
+                        continue;
                     }
+
+                    const detectedScores = analysisResult.scores || [];
+                    if (detectedScores.length === 0) continue;
+
+                    for (let i = 0; i < questions.length; i++) {
+                        if (detectedScores[i] !== undefined) {
+                            const question = questions[i];
+                            const score = Math.min(detectedScores[i], question.points);
+                            totalScoresSaved++;
+                            
+                            const scoreRef = adminDb.collection('scores').doc(`${examId}_${student.id}_${question.id}`);
+                            batch.set(scoreRef, {
+                                examId, studentId: student.id, questionId: question.id,
+                                score: score, teacherId, updatedAt: new Date()
+                            }, { merge: true });
+                        }
+                    }
+                } finally {
+                    await fs.unlink(tempPath); // Geçici dosyayı her durumda sil
                 }
             }
         }
-        console.log("\n--- Öğrenci Kağıtlarını İşleme Döngüsü Tamamlandı ---");
 
         if (processedStudentCount === 0) {
-            console.warn("Sonuç: Analiz edilecek hiç öğrenci kağıdı bulunamadı.");
             return { message: 'Analiz edilecek hiç öğrenci kağıdı bulunamadı.', success: false };
         }
 
         if (totalScoresSaved > 0) {
-            console.log(`Toplam ${totalScoresSaved} puan kaydedildi. Veritabanına yazılıyor...`);
             await batch.commit();
-            console.log("Veritabanı başarıyla güncellendi.");
         }
 
         revalidatePath(`/dashboard/analysis/${examId}`);
         revalidatePath(`/dashboard/exams/${examId}/upload`);
 
-        let finalMessage = "";
-        if (totalScoresSaved > 0) {
-            finalMessage = `Yapay zeka analizi tamamlandı! ${processedStudentCount} öğrencinin kağıdı incelendi ve toplam ${totalScoresSaved} adet puan başarıyla kaydedildi.`
-        } else {
-            finalMessage = "Analiz tamamlandı. İncelenen kağıtlar üzerinde yapay zeka tarafından okunabilecek net bir puan tespit edilemedi.";
-        }
-        console.log(`Nihai Sonuç: ${finalMessage}`);
-        console.log("--- ANALİZ BAŞARIYLA SONA ERDİ ---");
+        let finalMessage = totalScoresSaved > 0
+            ? `Yapay zeka analizi tamamlandı! ${processedStudentCount} öğrencinin kağıdı incelendi ve toplam ${totalScoresSaved} adet puan başarıyla kaydedildi.`
+            : "Analiz tamamlandı. İncelenen kağıtlar üzerinde yapay zeka tarafından okunabilecek net bir puan tespit edilemedi.";
+            
         return { message: finalMessage, success: true };
 
     } catch (error: any) {
-        console.error("!!! KRİTİK ANALİZ HATASI !!!:", error);
+        console.error("KRİTİK ANALİZ HATASI:", error);
         return { message: `Analiz sırasında beklenmedik bir sunucu hatası oluştu: ${error.message}`, success: false };
     }
 }
-
 
 // --- Scoring Actions --- //
 const ScoreSchema = z.object({

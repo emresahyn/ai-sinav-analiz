@@ -46,7 +46,18 @@ export default function ClassDetailPage({ params }: { params: { id: string } }) 
 
       const q = query(collection(db, `classes/${classId}/students`));
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        const studentsData: Student[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
+        let studentsData: Student[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
+        
+        // **YENİ**: Öğrencileri numaralarına göre sayısal olarak sırala
+        studentsData.sort((a, b) => {
+            const numA = parseInt(a.studentNumber, 10);
+            const numB = parseInt(b.studentNumber, 10);
+            if (isNaN(numA) && isNaN(numB)) return a.studentNumber.localeCompare(b.studentNumber);
+            if (isNaN(numA)) return 1;
+            if (isNaN(numB)) return -1;
+            return numA - numB;
+        });
+
         setStudents(studentsData);
         setLoading(false);
       });

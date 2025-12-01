@@ -44,7 +44,6 @@ const AnalysisPage = () => {
   const [analysisState, formAction] = useFormState(analyzeExamPapers, { success: false, message: '' });
 
   // Verileri sadece bir kere, ilk yüklemede çeken Effect.
-  // Bu yapı, sonsuz döngüyü kesin olarak engeller.
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
@@ -76,7 +75,19 @@ const AnalysisPage = () => {
         if (examData.classId) {
           const studentsRef = collection(db, 'classes', examData.classId, 'students');
           const studentsSnap = await getDocs(studentsRef);
-          setStudents(studentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student)));
+          let studentsData = studentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
+          
+          // **YENİ**: Öğrencileri numaralarına göre sayısal olarak sırala
+          studentsData.sort((a, b) => {
+              const numA = parseInt(a.studentNumber, 10);
+              const numB = parseInt(b.studentNumber, 10);
+              if (isNaN(numA) && isNaN(numB)) return a.studentNumber.localeCompare(b.studentNumber);
+              if (isNaN(numA)) return 1;
+              if (isNaN(numB)) return -1;
+              return numA - numB;
+          });
+
+          setStudents(studentsData);
         }
         
         const scoreResult = await getStudentScoresForExam(examId, user.uid);
@@ -101,7 +112,6 @@ const AnalysisPage = () => {
     if (analysisState?.message) {
       if (analysisState.success) {
         toast.success(analysisState.message);
-        // Sadece skorları tekrar çek, tüm sayfayı değil.
         const refetchScores = async () => {
             if (!examId || !user?.uid) return;
             const scoreResult = await getStudentScoresForExam(examId, user.uid);
@@ -115,7 +125,7 @@ const AnalysisPage = () => {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [analysisState]); // Sadece `analysisState` değiştiğinde tetiklenir.
+  }, [analysisState]);
 
   const handleScoreChange = (studentId: string, questionId: string, value: string) => {
     const key = `${studentId}_${questionId}`;
@@ -123,7 +133,7 @@ const AnalysisPage = () => {
   };
 
   const handleSaveScore = async (studentId: string, questionId: string) => {
-    if (!user?.uid || !examId) return; // examId kontrolü eklendi
+    if (!user?.uid || !examId) return;
     const key = `${studentId}_${questionId}`;
     const scoreValue = scores[key];
     const score = Number(scoreValue);
