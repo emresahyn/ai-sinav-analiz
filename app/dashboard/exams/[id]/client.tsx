@@ -1,21 +1,23 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
-import Link from 'next/link';
-import { useFormStatus, useFormState } from 'react-dom';
-import { collection, doc, onSnapshot, query, orderBy, where } from 'firebase/firestore';
+import { useEffect, useState } from 'react';
+import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/app/context/AuthContext';
-import { uploadExamPaper, uploadAnswerKey } from '@/app/upload-action';
+import { uploadExamPaper } from '@/app/upload-action';
 import { runAnalysis } from '@/app/analysis-action';
-import { Loader2, AlertCircle, ArrowLeft, Wand2, CheckCircle, FileCheck, FileWarning, Upload } from 'lucide-react';
+import { Loader2, AlertCircle, Wand2, CheckCircle, FileCheck, FileWarning, Upload } from 'lucide-react';
 
 // --- Tür Tanımları ---
 interface ExamDetails { id: string; title: string; date: string; answerKeyPath?: string; }
-interface Acquisition { id: string; questionNumber: string; description: string; }
 interface Class { id: string; name: string; }
 interface Student { id: string; name: string; studentNumber: string; }
-interface ExamPaper { studentId: string; filePath: string; status?: 'Analiz Edildi' | 'Bekleniyor'; analysis?: any }
+interface ExamPaper { 
+    studentId: string; 
+    filePath: string; 
+    status?: 'Analiz Edildi' | 'Bekleniyor'; 
+    analysis?: { [key: string]: 'Doğru' | 'Yanlış' | 'Boş' };
+}
 
 // --- Yükleme ve Analiz için Alt Bileşenler ---
 const StudentPaperUploader = ({ examId, student, paper }: { examId: string, student: Student, paper?: ExamPaper }) => {
@@ -88,7 +90,6 @@ export default function ExamDetailClientPage({ id }: { id: string }) {
     
     // Durumlar (States)
     const [examDetails, setExamDetails] = useState<ExamDetails | null>(null);
-    const [acquisitions, setAcquisitions] = useState<Acquisition[]>([]);
     const [classes, setClasses] = useState<Class[]>([]);
     const [selectedClass, setSelectedClass] = useState<string>('');
     const [students, setStudents] = useState<Student[]>([]);
@@ -130,10 +131,6 @@ export default function ExamDetailClientPage({ id }: { id: string }) {
             setErrorMessage(`Sınav verileri alınamadı: ${err.message}.`);
           }
         ));
-
-        // Diğer alt sorgular (Bunlar ana sayfayı çökertmez)
-        const acqQuery = query(collection(db, 'exams', id, 'acquisitions'), orderBy('questionNumber'));
-        unsubscribers.push(onSnapshot(acqQuery, (snapshot) => setAcquisitions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Acquisition)))));
 
         const classesQuery = query(collection(db, 'classes'), where('teacherId', '==', user.uid));
         unsubscribers.push(onSnapshot(classesQuery, (snapshot) => setClasses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Class)))));

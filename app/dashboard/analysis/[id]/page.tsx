@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useFormState, useFormStatus } from 'react-dom';
-import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, DocumentData } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/app/context/AuthContext';
 import { toast, Toaster } from 'react-hot-toast';
@@ -13,6 +13,11 @@ import Link from 'next/link';
 import { Alert, Button } from 'react-bootstrap';
 
 // --- Tür Tanımları ---
+interface Exam extends DocumentData {
+  title: string;
+  classId: string;
+  teacherId: string;
+}
 interface Question { id: string; questionNumber: number; points: number; }
 interface Student { id: string; name: string; studentNumber: string; }
 interface ScoresMap { [key: string]: number | string; }
@@ -34,7 +39,7 @@ const AnalysisPage = () => {
   const router = useRouter();
   const examId = params ? (Array.isArray(params.id) ? params.id[0] : params.id) : null;
 
-  const [exam, setExam] = useState<any>(null);
+  const [exam, setExam] = useState<Exam | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [scores, setScores] = useState<ScoresMap>({});
@@ -64,7 +69,7 @@ const AnalysisPage = () => {
           setError('Sınav bulunamadı veya bu analizi görüntüleme yetkiniz yok.');
           return;
         }
-        const examData = examSnap.data();
+        const examData = examSnap.data() as Exam;
         setExam(examData);
 
         const questionsRef = collection(db, 'exams', examId, 'questions');
@@ -75,7 +80,7 @@ const AnalysisPage = () => {
         if (examData.classId) {
           const studentsRef = collection(db, 'classes', examData.classId, 'students');
           const studentsSnap = await getDocs(studentsRef);
-          let studentsData = studentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
+          const studentsData = studentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
           
           // **YENİ**: Öğrencileri numaralarına göre sayısal olarak sırala
           studentsData.sort((a, b) => {
@@ -92,11 +97,12 @@ const AnalysisPage = () => {
         
         const scoreResult = await getStudentScoresForExam(examId, user.uid);
         if (scoreResult.success && scoreResult.scores) {
-          setScores(scoreResult.scores);
+          setScores(scoreResult.scores as ScoresMap);
         }
-      } catch (err) {
+      } catch (err: unknown) {
         console.error("Veri çekme hatası:", err);
-        setError('Veri yüklenirken bir hata oluştu.');
+        const message = err instanceof Error ? err.message : 'Bilinmeyen bir hata oluştu.';
+        setError(`Veri yüklenirken bir hata oluştu: ${message}`);
       } finally {
         setPageLoading(false);
       }
@@ -116,7 +122,7 @@ const AnalysisPage = () => {
             if (!examId || !user?.uid) return;
             const scoreResult = await getStudentScoresForExam(examId, user.uid);
             if (scoreResult.success && scoreResult.scores) {
-                setScores(scoreResult.scores);
+                setScores(scoreResult.scores as ScoresMap);
             }
         };
         refetchScores();
@@ -125,7 +131,7 @@ const AnalysisPage = () => {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [analysisState]);
+  }, [analysisState, examId, user?.uid]);
 
   const handleScoreChange = (studentId: string, questionId: string, value: string) => {
     const key = `${studentId}_${questionId}`;

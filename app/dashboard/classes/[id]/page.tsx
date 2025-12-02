@@ -7,7 +7,7 @@ import { doc, getDoc, collection, onSnapshot, query } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/app/context/AuthContext';
 import { addStudent, addStudentsInBulk, deleteStudent } from '@/app/actions';
-import { Loader2, UserPlus, Users, ArrowLeft, AlertTriangle, CheckCircle, Trash2, Upload } from 'lucide-react';
+import { Loader2, UserPlus, Users, ArrowLeft, Trash2, Upload } from 'lucide-react';
 import Link from 'next/link';
 
 // --- Type Definitions --- //
@@ -46,7 +46,7 @@ export default function ClassDetailPage({ params }: { params: { id: string } }) 
 
       const q = query(collection(db, `classes/${classId}/students`));
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        let studentsData: Student[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
+        const studentsData: Student[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
         
         // **YENİ**: Öğrencileri numaralarına göre sayısal olarak sırala
         studentsData.sort((a, b) => {

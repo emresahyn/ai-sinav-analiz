@@ -69,8 +69,9 @@ export async function runAnalysis(examId: string, teacherId: string) {
         revalidatePath(`/dashboard/exams/${examId}`);
         return { success: true, message: `${analyzedCount} öğrenci kağıdı başarıyla analiz edildi!` };
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Analysis failed:", error);
-        return { success: false, message: `Analiz sırasında beklenmedik bir hata oluştu: ${error.message}` };
+        const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen bir hata oluştu.';
+        return { success: false, message: `Analiz sırasında beklenmedik bir hata oluştu: ${errorMessage}` };
     }
 }

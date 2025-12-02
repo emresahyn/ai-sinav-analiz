@@ -6,7 +6,7 @@ import { useFormState } from 'react-dom';
 import { doc, getDoc, collection, query, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/app/context/AuthContext';
-import { Loader2, ArrowLeft, Upload, User, Paperclip, AlertCircle, Trash2, File as FileIcon, Wand2 } from 'lucide-react';
+import { Loader2, ArrowLeft, Upload, User, AlertCircle, Trash2, File as FileIcon, Wand2 } from 'lucide-react';
 import Link from 'next/link';
 import { uploadExamPaper, getUploadedPapers, deleteExamPaper, analyzeExamPapers } from '@/app/actions';
 
@@ -34,7 +34,7 @@ function StudentUploadForm({ student, examId, teacherId, initialFiles, isAnalysi
             }
             setUploadMessage({ text: uploadState.message, success: uploadState.success, key: Date.now() });
         }
-    }, [uploadState]);
+    }, [uploadState, student.id]);
 
     useEffect(() => {
         if (uploadMessage) {
