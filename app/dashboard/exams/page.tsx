@@ -13,7 +13,7 @@ import { deleteExam } from '@/app/actions'; // Import the server action
 interface Exam {
   id: string;
   title: string;
-  date: string;
+  date: any;
   classId: string;
   className?: string; // Add className to the interface
 }
@@ -23,7 +23,23 @@ interface ClassData {
         name: string;
     }
 }
-
+// Tarihi (Timestamp veya string) güvenli bir şekilde formatlayan fonksiyon
+const formatDate = (dateInput: any): string => {
+  if (!dateInput) {
+    return 'Belirtilmemiş';
+  }
+  // Firestore'dan gelen Timestamp nesnesini Date'e çevirir
+  if (typeof dateInput.toDate === 'function') {
+    return new Date(dateInput.toDate()).toLocaleDateString('tr-TR');
+  }
+  // Eski kayıtlardan gelen string veya zaten Date olan veriyi işler
+  const date = new Date(dateInput);
+  if (!isNaN(date.getTime())) {
+    return date.toLocaleDateString('tr-TR');
+  }
+  // Hiçbir koşula uymuyorsa geçersiz olduğunu belirtir
+  return 'Geçersiz Tarih';
+};
 export default function ExamsPage() {
   const { user, loading: authLoading } = useAuth();
   const [exams, setExams] = useState<Exam[]>([]);
@@ -116,7 +132,7 @@ export default function ExamsPage() {
                 <p className="card-text text-muted small">
                     {classData[exam.classId] ? `Sınıf: ${classData[exam.classId].name}` : 'Sınıf atanmamış'}
                     <br/>
-                    Tarih: {new Date(exam.date).toLocaleDateString()}
+                    Tarih: {formatDate(exam.date)}
                 </p>
                 <div className="mt-auto d-flex justify-content-between">
                    <Link href={`/dashboard/exams/${exam.id}`} className="btn btn-outline-primary btn-sm">

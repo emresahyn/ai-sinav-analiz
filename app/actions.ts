@@ -194,6 +194,95 @@ export async function deleteExam(examId: string, teacherId: string): Promise<Act
     }
 }
 
+// --- BU FONKSİYONU app/actions.ts DOSYASINA EKLEYİN ---
+
+const CloneExamSchema = z.object({
+    sourceExamId: z.string().min(1, "Kaynak sınav ID'si gerekli."),
+    targetClassId: z.string().min(1, "Hedef sınıf ID'si gerekli."),
+    teacherId: z.string().min(1, "Öğretmen ID'si gerekli."),
+});
+
+export async function cloneExam(prevState: any, formData: FormData) {
+    const validatedFields = CloneExamSchema.safeParse(Object.fromEntries(formData));
+
+    if (!validatedFields.success) {
+        return { success: false, message: 'Geçersiz veri: Sınav veya sınıf seçilmemiş.' };
+    }
+
+    const { sourceExamId, targetClassId, teacherId } = validatedFields.data;
+
+    // 1. Güvenlik Kontrolü: Öğretmenin hem kaynak sınava hem de hedef sınıfa sahip olduğunu doğrula
+    if (!await verifyOwnership('exams', sourceExamId, teacherId)) {
+        return { success: false, message: 'Kaynak sınavı kopyalama yetkiniz yok.' };
+    }
+    if (!await verifyOwnership('classes', targetClassId, teacherId)) {
+        return { success: false, message: 'Hedef sınıfa sınav kopyalama yetkiniz yok.' };
+    }
+    
+    try {
+        const sourceExamDoc = await adminDb.collection('exams').doc(sourceExamId).get();
+        if (!sourceExamDoc.exists) {
+            return { success: false, message: 'Kopyalanacak sınav bulunamadı.' };
+        }
+
+        // Sınavın zaten bu sınıfa ait olup olmadığını kontrol et
+        if (sourceExamDoc.data()?.classId === targetClassId) {
+            return { success: false, message: 'Sınav zaten bu sınıfa ait. Lütfen farklı bir sınıf seçin.' };
+        }
+        
+        const batch = adminDb.batch();
+
+        // 2. Kaynak sınav bilgilerini al ve yeni bir sınav oluştur
+        const newExamRef = adminDb.collection('exams').doc(); // Yeni sınav için otomatik ID
+       // YUKARIDAKİ KODU BU DOĞRU KODLA DEĞİŞTİRİN
+
+        const sourceData = sourceExamDoc.data();
+
+        // Tarih alanını güvenli bir şekilde işle:
+        // 1. Orijinal sınavda tarih var mı diye kontrol et (varsa Timestamp'tır).
+        // 2. Varsa, JavaScript'in anlayacağı bir Date nesnesine çevir (.toDate()).
+        // 3. Eğer orijinal sınavda hiç tarih alanı yoksa, bugünün tarihini varsayılan olarak ata.
+
+        batch.set(newExamRef, {
+            title: sourceData?.title, // İsteğiniz üzerine "(Kopya)" eki kaldırıldı.
+            classId: targetClassId,
+            teacherId: teacherId,
+            date: sourceData?.date, // Güvenli ve doğru tarih formatı burada kullanılıyor.
+            sourceExamId: sourceExamId,
+            createdAt: new Date()
+        });
+
+
+        // 3. Kaynak sınavın tüm sorularını oku
+        const questionsSnapshot = await adminDb.collection('exams').doc(sourceExamId).collection('questions').get();
+        
+        // 4. Soruları yeni sınava ekle
+        if (!questionsSnapshot.empty) {
+            const newQuestionsCollectionRef = newExamRef.collection('questions');
+            questionsSnapshot.docs.forEach(questionDoc => {
+                const newQuestionDocRef = newQuestionsCollectionRef.doc(); // Her soru için yeni ID
+                batch.set(newQuestionDocRef, questionDoc.data());
+            });
+        }
+
+        // 5. Tüm işlemleri tek seferde veritabanına işle
+        await batch.commit();
+
+        revalidatePath('/dashboard/exams'); // Ana sınav listesini yenile
+
+        return { 
+            success: true, 
+            message: 'Sınav başarıyla yeni sınıfa kopyalandı.', 
+            newExamId: newExamRef.id 
+        };
+
+    } catch (error: any) {
+        console.error("Sınav kopyalama hatası:", error);
+        return { success: false, message: `Sunucu hatası: ${error.message}` };
+    }
+}
+
+
 // --- Sınav Kağıdı Eylemleri --- //
 const PaperUploadSchema = z.object({
     examId: z.string().min(1),

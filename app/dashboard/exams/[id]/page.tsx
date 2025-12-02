@@ -3,12 +3,17 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useFormState } from 'react-dom';
-import { doc, getDoc, collection, onSnapshot, query } from 'firebase/firestore';
+import { doc, getDoc, collection, onSnapshot, query, where, getDocs } from 'firebase/firestore'; // where ve getDocs eklendi
+import Link from 'next/link';
+import { useRouter } from 'next/navigation'; // Yönlendirme için bu satırı ekleyin
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/app/context/AuthContext';
 import { addQuestionToExam, updateQuestionInExam, deleteQuestionFromExam } from '@/app/actions';
 import { Loader2, Plus, Edit, Trash2, ArrowLeft, BookOpen, AlertTriangle, CheckCircle, X, Upload } from 'lucide-react';
-import Link from 'next/link';
+import { Copy, Users } from 'lucide-react'; // 'Copy' ve 'Users' ikonlarını ekleyin
+import { Modal } from 'react-bootstrap';      // Modal bileşenini ekleyin
+import { cloneExam } from '@/app/actions';     // Yeni sunucu eylemini ekleyin
+
 
 // --- Type Definitions --- //
 interface ExamData {
@@ -22,6 +27,12 @@ interface Question {
     points: number;
     kazanim?: string;
 }
+// --- YENİ EKLENECEK KOD ---
+interface ClassData {
+  id: string;
+  name: string;
+}
+// --- YENİ EKLENECEK KOD BİTTİ ---
 
 // --- Main Page Component --- //
 export default function ExamDetailPage({ params }: { params: { id: string } }) {
@@ -38,7 +49,14 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
   const addFormRef = useRef<HTMLFormElement>(null);
   const editFormRef = useRef<HTMLFormElement>(null);
   const examId = params.id;
-
+  const router = useRouter(); // Yönlendirme için router
+  
+  // --- YENİ EKLENECEK KODLAR ---
+  const [showCloneModal, setShowCloneModal] = useState(false);
+  const [classes, setClasses] = useState<any[]>([]); // Sınıf listesi için state
+  const [cloneState, cloneFormAction] = useFormState(cloneExam, { success: false, message: '' });
+  // --- YENİ EKLENECEK KODLAR BİTTİ ---
+  
   // Load Exam and Question Data
   useEffect(() => {
     if (user) {
@@ -78,7 +96,40 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
           setFormMessage({text: result.message, success: result.success});
       }
   }
+// --- YENİ EKLENECEK KODLAR ---
 
+    // Kopyalama modal'ını açan ve sınıfları çeken fonksiyon
+    const handleShowCloneModal = async () => {
+      if (!user) return;
+      try {
+          const q = query(collection(db, "classes"), where("teacherId", "==", user.uid));
+          const querySnapshot = await getDocs(q);
+          const userClasses = querySnapshot.docs
+              .map(doc => ({ id: doc.id, ...doc.data() } as ClassData))
+              .filter(c => c.id !== examData?.classId); // Mevcut sınıfı listeden çıkar
+
+          setClasses(userClasses);
+          setShowCloneModal(true);
+      } catch (error) {
+          setFormMessage({ text: "Sınıflar yüklenirken bir hata oluştu.", success: false });
+      }
+  };
+  
+  // Kopyalama işlemi sonucunu dinle ve bildirim/yönlendirme yap
+  useEffect(() => {
+      if (cloneState.message) {
+          setFormMessage({ text: cloneState.message, success: cloneState.success });
+          if (cloneState.success) {
+              setShowCloneModal(false);
+              // Yeni sınavın sayfasına yönlendir
+              if (cloneState.newExamId) {
+                  router.push(`/dashboard/exams/${cloneState.newExamId}`);
+              }
+          }
+      }
+  }, [cloneState, router]);
+
+  // --- YENİ EKLENECEK KODLAR BİTTİ ---
   // --- Render --- //
   if (loading || authLoading) {
     return <div className="d-flex vh-100 align-items-center justify-content-center"><Loader2 className="animate-spin h-8 w-8 text-primary" /> <span className="ms-3 fs-5 text-muted">Veriler yükleniyor...</span></div>;
@@ -91,21 +142,27 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
   return (
     <div className="container-fluid p-4">
         <header className="border-bottom pb-3 mb-4">
-            <div className="d-flex justify-content-between align-items-center">
-                 <Link href="/dashboard/exams" className="btn btn-outline-secondary mb-2">
-                    <ArrowLeft size={16} className="me-2"/> Sınavlara Dön
-                </Link>
-            </div>
-            <div className="d-flex justify-content-between align-items-center mt-2">
+            {/* ... Sınavlara Dön butonu ... */}
+            <Link href="/dashboard/exams" className="btn btn-outline-secondary mb-2">
+                <ArrowLeft size={16} className="me-2"/> Sınavlara Dön
+            </Link>
+
+            <div className="d-flex flex-wrap justify-content-between align-items-center mt-2 gap-2">
                 <div>
                     <h1 className="h2">{examData?.title || 'Sınav Detayları'}</h1>
-                    <p className="text-muted">Bu sınavın sorularını, puanlarını ve kazanımlarını yönetin.</p>
+                    <p className="text-muted mb-0">Bu sınavın sorularını, puanlarını ve kazanımlarını yönetin.</p>
                 </div>
-                {examData?.classId && (
-                    <Link href={`/dashboard/exams/${examId}/upload`} className="btn btn-success d-flex align-items-center">
-                        <Upload size={18} className="me-2"/> Sınav Kağıtlarını Yükle
-                    </Link>
-                )}
+                <div className="d-flex flex-wrap gap-2">
+                    {/* --- YENİ BUTON BURAYA EKLENDİ --- */}
+                    <button className="btn btn-outline-secondary" onClick={handleShowCloneModal}>
+                        <Copy size={16} className="me-2"/> Sınavı Kopyala
+                    </button>
+                    {examData?.classId && (
+                        <Link href={`/dashboard/exams/${examId}/upload`} className="btn btn-primary d-flex align-items-center">
+                            <Upload size={18} className="me-2"/> Sınav Kağıtlarını Yükle
+                        </Link>
+                    )}
+                </div>
             </div>
         </header>
 
@@ -188,6 +245,37 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
         </div>
+        {/* --- YENİ EKLENECEK MODAL KODU --- */}
+        <Modal show={showCloneModal} onHide={() => setShowCloneModal(false)} centered>
+            <Modal.Header closeButton>
+                <Modal.Title>Sınavı Kopyala</Modal.Title>
+            </Modal.Header>
+            <form action={cloneFormAction}>
+                <Modal.Body>
+                    <p>&ldquo;<strong>{examData?.title}</strong>&ldquo; sınavını ve tüm sorularını aşağıdaki sınıfa kopyala:</p>
+                    <input type="hidden" name="sourceExamId" value={examId} />
+                    {user && <input type="hidden" name="teacherId" value={user.uid} />}
+                    
+                    {classes.length > 0 ? (
+                        <select name="targetClassId" className="form-select" required>
+                            <option value="">Bir sınıf seçin...</option>
+                            {classes.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                        </select>
+                    ) : (
+                        <div className='alert alert-warning'>Kopyalanacak başka sınıfınız bulunmuyor.</div>
+                    )}
+                </Modal.Body>
+                <Modal.Footer>
+                    <button type="button" className="btn btn-secondary" onClick={() => setShowCloneModal(false)}>İptal</button>
+                    <button type="submit" className="btn btn-primary" disabled={classes.length === 0}>
+                       <Copy size={16} className="me-2"/> Kopyala
+                    </button>
+                </Modal.Footer>
+            </form>
+        </Modal>
+        {/* --- YENİ EKLENECEK MODAL KODU BİTTİ --- */}
     </div>
   );
 }
