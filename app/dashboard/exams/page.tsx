@@ -2,10 +2,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { collection, query, where, onSnapshot, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/app/context/AuthContext';
-import { PlusCircle, Loader2, Edit, Trash2, ArrowRight } from 'lucide-react';
+import { PlusCircle, Loader2, Trash2, ArrowRight } from 'lucide-react';
 import AddExamModal from '@/app/dashboard/components/AddExamModal';
 import Link from 'next/link';
 import { deleteExam } from '@/app/actions'; // Import the server action
@@ -73,7 +73,7 @@ export default function ExamsPage() {
     } else if (!authLoading) {
       setLoading(false);
     }
-  }, [user, authLoading]);
+  }, [user, authLoading, classData]);
 
   const handleDelete = async (examId: string) => {
       if (confirm('Bu sınavı ve ilişkili tüm kağıtları kalıcı olarak silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.')) {

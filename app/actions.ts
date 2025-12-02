@@ -336,6 +336,40 @@ export async function addQuestionToExam(prevState: ActionState | undefined, form
         return { message: `Sunucu Hatası: ${errorMessage}`, success: false };
     }
 }
+export async function updateQuestionInExam(prevState: any, formData: FormData) {
+    const UpdateQuestionSchema = z.object({
+        questionNumber: z.coerce.number().min(1),
+        points: z.coerce.number().min(0),
+        kazanim: z.string().optional(),
+        examId: z.string().min(1),
+        questionId: z.string().min(1),
+        teacherId: z.string().min(1),
+    });
+    const validatedFields = UpdateQuestionSchema.safeParse(Object.fromEntries(formData));
+    if (!validatedFields.success) return { message: 'Geçersiz veri.', success: false };
+
+    const { examId, questionId, teacherId, questionNumber, points, kazanim } = validatedFields.data;
+    if (!await verifyOwnership('exams', examId, teacherId)) return { message: 'Bu işlem için yetkiniz yok.', success: false };
+    
+    try {
+        await adminDb.collection('exams').doc(examId).collection('questions').doc(questionId).update({ questionNumber, points, kazanim: kazanim || '' });
+        revalidatePath(`/dashboard/exams/${examId}`);
+        return { message: 'Soru başarıyla güncellendi.', success: true };
+    } catch (e: any) {
+        return { message: `Sunucu Hatası: ${e.message}`, success: false };
+    }
+}
+
+export async function deleteQuestionFromExam(examId: string, questionId: string, teacherId: string) {
+    if (!await verifyOwnership('exams', examId, teacherId)) return { message: 'Bu işlem için yetkiniz yok.', success: false };
+    try {
+        await adminDb.collection('exams').doc(examId).collection('questions').doc(questionId).delete();
+        revalidatePath(`/dashboard/exams/${examId}`);
+        return { message: 'Soru başarıyla silindi.', success: true };
+    } catch (e: any) {
+        return { message: `Sunucu Hatası: ${e.message}`, success: false };
+    }
+}
 
 // --- Analysis & Scoring Actions --- //
 
