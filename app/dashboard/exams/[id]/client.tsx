@@ -5,7 +5,7 @@ import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/app/context/AuthContext';
 import { uploadExamPaper } from '@/app/upload-action';
-import { runAnalysis } from '@/app/analysis-action';
+import { analyzeExamPapers } from '@/app/actions';
 import { Loader2, AlertCircle, Wand2, CheckCircle, FileCheck, FileWarning, Upload } from 'lucide-react';
 
 // --- Tür Tanımları ---
@@ -63,14 +63,25 @@ const AnalysisRunner = ({ examId, isReady }: { examId: string, isReady: boolean}
     const [isPending, setIsPending] = useState(false);
 
     const handleClick = async () => {
+        // Önce gerekli kontrolleri yap
         if (!user || !isReady || !confirm('Analizi başlatmak istediğinizden emin misiniz? Bu işlem mevcut analiz sonuçlarının üzerine yazabilir.')) return;
         
         setIsPending(true);
-        const result = await runAnalysis(examId, user.uid);
+        
+        // Sunucu eylemini çağırmak için bir FormData nesnesi oluştur
+        const formData = new FormData();
+        formData.append('examId', examId);
+        formData.append('teacherId', user.uid); // Fonksiyon bu alanı da bekliyor
+    
+        // Fonksiyonu, form verisiyle doğru şekilde çağır
+        const result = await analyzeExamPapers({ success: false, message: '' }, formData);
+
+        
         setStatus(result);
         setIsPending(false);
         setTimeout(() => setStatus(null), 5000);
     }
+    
 
     return (
         <div className="mt-4">

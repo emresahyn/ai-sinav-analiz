@@ -1,253 +1,241 @@
-
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
-import { useFormState } from 'react-dom';
-import { doc, getDoc, collection, query, onSnapshot } from 'firebase/firestore';
+import { useEffect, useState, useMemo } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { useFormState, useFormStatus } from 'react-dom';
+import { doc, getDoc, collection, getDocs, DocumentData } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/app/context/AuthContext';
-import { Loader2, ArrowLeft, Upload, User, AlertCircle, Trash2, File as FileIcon, Wand2 } from 'lucide-react';
+import { toast, Toaster } from 'react-hot-toast';
+import { Loader2, ArrowLeft, Sparkles, Upload, Trash2, FileCheck2, ShieldX } from 'lucide-react';
 import Link from 'next/link';
-import { uploadExamPaper, getUploadedPapers, deleteExamPaper, analyzeExamPapers } from '@/app/actions';
+import { Alert, Button, Form, Card, ListGroup } from 'react-bootstrap';
+import { uploadExamPaper, getUploadedPapers, deleteExamPaper, analyzeExamPapers, ActionState } from '@/app/actions';
 
-// --- Type Definitions --- //
-interface ExamData { title: string; classId?: string; }
+// --- Tür Tanımları ---
+interface Exam extends DocumentData { title: string; classId: string; teacherId: string; }
 interface Student { id: string; name: string; studentNumber: string; }
 interface UploadedFile { name: string; path: string; }
-interface StudentFiles { [studentId: string]: UploadedFile[]; }
 
-// --- Student Form Component --- //
-function StudentUploadForm({ student, examId, teacherId, initialFiles, isAnalysisRunning }: { student: Student; examId: string; teacherId: string, initialFiles: UploadedFile[], isAnalysisRunning: boolean }) {
-    const [uploadState, formAction] = useFormState(uploadExamPaper, { message: '', success: false, studentId: student.id, uploadedFiles: [] });
-    const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-    const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>(initialFiles);
-    const [deleteMessage, setDeleteMessage] = useState<{text: string, success: boolean, key: number} | null>(null);
-    const [uploadMessage, setUploadMessage] = useState<{text: string, success: boolean, key: number} | null>(null);
-    const formRef = useRef<HTMLFormElement>(null);
+// --- Yükleniyor Katmanı ---
+const LoadingOverlay = () => (
+    <div className="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center bg-dark bg-opacity-50 rounded-3" style={{ zIndex: 10 }}>
+      <Loader2 size={48} className="animate-spin text-white mb-3" />
+      <h4 className="fw-bold text-white">Yapay Zeka Analizi Sürüyor...</h4>
+      <p className="text-white-50">Bu işlem birkaç dakika sürebilir. Lütfen sayfayı kapatmayın.</p>
+    </div>
+  );
+
+// --- Alt Bileşenler ---
+const StudentCard = ({ student, examId, onFileChange }: { student: Student; examId: string; onFileChange: (studentId: string, change: number) => void; }) => {
+    const { user } = useAuth();
+    const initialState: ActionState = { message: '', success: false, studentId: student.id };
+    const [state, formAction] = useFormState(uploadExamPaper, initialState);
+    const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+    const [isFetchingFiles, setIsFetchingFiles] = useState(true);
 
     useEffect(() => {
-        if (uploadState.message && uploadState.studentId === student.id) {
-            if(uploadState.success) {
-                setUploadedFiles(prev => [...prev, ...uploadState.uploadedFiles!]);
-                setSelectedFiles([]);
-                formRef.current?.reset();
+        const fetchFiles = async () => {
+            const result = await getUploadedPapers(examId, student.id);
+            if (result.success && result.files) {
+                setUploadedFiles(result.files);
+                onFileChange(student.id, result.files.length);
             }
-            setUploadMessage({ text: uploadState.message, success: uploadState.success, key: Date.now() });
-        }
-    }, [uploadState, student.id]);
+            setIsFetchingFiles(false);
+        };
+        fetchFiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [examId, student.id]);
 
     useEffect(() => {
-        if (uploadMessage) {
-            const timer = setTimeout(() => setUploadMessage(null), 5000);
-            return () => clearTimeout(timer);
+        if (state?.message && state.studentId === student.id) {
+            if (state.success) {
+                toast.success(state.message, { id: student.id });
+                if (state.uploadedFiles) {
+                    const newFiles = state.uploadedFiles.filter(f => !uploadedFiles.some(uf => uf.path === f.path));
+                    setUploadedFiles(prev => [...prev, ...newFiles]);
+                    onFileChange(student.id, newFiles.length);
+                }
+            } else {
+                toast.error(state.message, { id: student.id });
+            }
         }
-    }, [uploadMessage]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [state]);
 
-    useEffect(() => {
-        if (deleteMessage) {
-            const timer = setTimeout(() => setDeleteMessage(null), 5000);
-            return () => clearTimeout(timer);
-        }
-    }, [deleteMessage]);
+    const handleDelete = async (paperId: string, fileName: string) => {
+        if (!user) return;
+        
+        // YENİ: Silme onayı ekle
+        const isConfirmed = window.confirm(`"${fileName}" dosyasını kalıcı olarak silmek istediğinizden emin misiniz?\nBu işlem geri alınamaz.`);
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files) setSelectedFiles(Array.from(e.target.files));
-    };
-
-    const handleDeletePaper = async (paperId: string) => {
-        const fileName = uploadedFiles.find(f => f.path === paperId)?.name || 'bu dosyayı';
-        if (confirm(`'${fileName}' silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.`)) {
-            const result = await deleteExamPaper(examId, teacherId, paperId);
-            setDeleteMessage({ text: result.message, success: result.success, key: Date.now() });
-            if (result.success) {
+        if (isConfirmed) {
+            const res = await deleteExamPaper(examId, user.uid, paperId);
+            if (res.success) {
+                toast.success(res.message);
                 setUploadedFiles(prev => prev.filter(f => f.path !== paperId));
+                onFileChange(student.id, -1);
+            } else {
+                toast.error(res.message);
             }
         }
     };
+
+    const SubmitBtn = () => {
+        const { pending } = useFormStatus();
+        return <Button type="submit" variant="secondary" size="sm" disabled={pending}>{pending ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}</Button>;
+    }
 
     return (
-        <li className={`list-group-item ${isAnalysisRunning ? 'bg-light text-muted' : ''}`}>
-            <div className="d-flex flex-wrap align-items-center justify-content-between">
-                 <div className="d-flex align-items-center mb-2 mb-md-0 me-3">
-                    <User className="me-3 text-muted" size={32}/>
-                    <div>
-                        <div className="fw-bold">{student.name}</div>
-                        <div className="small text-muted">{student.studentNumber}</div>
-                    </div>
-                </div>
-                <form action={formAction} ref={formRef} className="d-flex align-items-center flex-grow-1" style={{minWidth: '320px'}}>
-                    <input type="file" name="papers" className="form-control form-control-sm me-2" multiple onChange={handleFileChange} accept="image/*" disabled={isAnalysisRunning} />
+        <Card className="mb-3">
+            <Card.Body>
+                <Card.Title className="d-flex justify-content-between align-items-center">{student.name} <span className="text-muted fw-normal fs-6">#{student.studentNumber}</span></Card.Title>
+                <Form action={formAction}>
                     <input type="hidden" name="examId" value={examId} />
                     <input type="hidden" name="studentId" value={student.id} />
-                    <input type="hidden" name="teacherId" value={teacherId} />
-                    <button type="submit" className="btn btn-sm btn-primary" disabled={selectedFiles.length === 0 || isAnalysisRunning}> <Upload size={16}/> </button>
-                </form>
-            </div>
-
-            { (uploadMessage) && (
-                <div key={uploadMessage.key} className={`alert ${uploadMessage.success ? 'alert-success' : 'alert-danger'} small p-2 mt-2`}>{uploadMessage.text}</div>
-            )}
-            { (deleteMessage) && (
-                <div key={deleteMessage.key} className={`alert ${deleteMessage.success ? 'alert-success' : 'alert-danger'} small p-2 mt-2`}>{deleteMessage.text}</div>
-            )}
-
-            <div className="mt-2 pt-2 border-top">
-                {uploadedFiles.length > 0 && (
-                    <div>
-                        <h6 className="small fw-bold">Yüklenmiş Dosyalar:</h6>
-                        <ul className="list-unstyled mb-0">
-                            {uploadedFiles.map((file) => (
-                                <li key={file.path} className="small d-flex align-items-center justify-content-between">
-                                    <span className="d-flex align-items-center text-success">
-                                        <FileIcon size={14} className="me-2"/> {file.name}
-                                    </span>
-                                    <button className="btn btn-sm btn-outline-danger p-0 px-1" onClick={() => handleDeletePaper(file.path)} disabled={isAnalysisRunning}><Trash2 size={12}/></button>
-                                </li>
-                            ))}
-                        </ul>
+                    <input type="hidden" name="teacherId" value={user?.uid || ''} />
+                    <div className="d-flex gap-2">
+                        <Form.Control type="file" name="papers" multiple accept="image/jpeg,image/png,image/webp" required className="form-control-sm" />
+                        <SubmitBtn />
                     </div>
+                </Form>
+                {isFetchingFiles ? (
+                    <div className="text-center mt-3"><Loader2 className="animate-spin text-muted" /></div>
+                ) : uploadedFiles.length > 0 && (
+                    <ListGroup variant="flush" className="mt-3">
+                        {uploadedFiles.map(file => (
+                            <ListGroup.Item key={file.path} className="d-flex justify-content-between align-items-center px-0">
+                                <span className="text-success"><FileCheck2 size={16} className="me-2"/>{file.name}</span>
+                                {/* GÜNCELLENDİ: Onay için dosya adı da gönderiliyor */}
+                                <Button variant="outline-danger" size="sm" onClick={() => handleDelete(file.path, file.name)}><Trash2 size={14} /></Button>
+                            </ListGroup.Item>
+                        ))}
+                    </ListGroup>
                 )}
-                 {uploadedFiles.length === 0 && selectedFiles.length === 0 && <p className="small text-muted fst-italic mt-2 mb-0">Bu öğrenci için henüz kağıt yüklenmemiş.</p>}
-            </div>
-        </li>
+            </Card.Body>
+        </Card>
     );
 }
 
-// --- Main Page Component --- //
-export default function UploadPage({ params }: { params: { id: string } }) {
-  const { user, loading: authLoading } = useAuth();
-  const [examData, setExamData] = useState<ExamData | null>(null);
-  const [students, setStudents] = useState<Student[]>([]);
-  const [initialFiles, setInitialFiles] = useState<StudentFiles>({});
-  const [loading, setLoading] = useState(true);
-  const examId = params.id;
-  
-  const [analysisState, analysisAction] = useFormState(analyzeExamPapers, { message: '', success: false });
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [displayMessage, setDisplayMessage] = useState({ text: '', success: false, key: 0 });
-  const analysisFormRef = useRef<HTMLFormElement>(null);
+// --- Ana Bileşen ---
+const UploadPage = () => {
+    const { user, loading: authLoading } = useAuth();
+    const params = useParams();
+    const router = useRouter();
+    const examId = (params?.id || '') as string;
 
 
-  // --- Data Loading Effect ---
-  useEffect(() => {
-    if (user) {
-      const examDocRef = doc(db, 'exams', examId);
-      getDoc(examDocRef).then(async (docSnap) => {
-        if (docSnap.exists()) {
-          const exam = docSnap.data() as ExamData;
-          setExamData(exam);
-          if (exam.classId) {
-            const studentsQuery = query(collection(db, `classes/${exam.classId}/students`));
-            const unsubscribe = onSnapshot(studentsQuery, async (snapshot) => {
-              const studentsData: Student[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
-              
-              studentsData.sort((a, b) => {
-                  const numA = parseInt(a.studentNumber, 10);
-                  const numB = parseInt(b.studentNumber, 10);
-                  if (isNaN(numA) && isNaN(numB)) return a.studentNumber.localeCompare(b.studentNumber);
-                  if (isNaN(numA)) return 1;
-                  if (isNaN(numB)) return -1;
-                  return numA - numB;
-              });
+    const [exam, setExam] = useState<Exam | null>(null);
+    const [students, setStudents] = useState<Student[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [totalPaperCount, setTotalPaperCount] = useState(0);
 
-              setStudents(studentsData);
+    const [analysisState, analysisFormAction] = useFormState(analyzeExamPapers, { success: false, message: '' });
 
-              const filePromises = studentsData.map(s => getUploadedPapers(examId, s.id));
-              const filesResults = await Promise.all(filePromises);
+    useEffect(() => {
+        if (authLoading) return;
+        if (!user) { router.push('/login'); return; }
 
-              const filesByStudent: StudentFiles = {};
-              filesResults.forEach((result, index) => {
-                  if(result.success) filesByStudent[studentsData[index].id] = result.files || [];
-              });
-              setInitialFiles(filesByStudent);
-              setLoading(false);
-            });
-            return () => unsubscribe();
-          }
-        } else { setLoading(false); }
-      });
-    } else if (!authLoading) { setLoading(false); }
-  }, [user, authLoading, examId]);
+        const fetchExamData = async () => {
+            try {
+                const examRef = doc(db, 'exams', examId);
+                const examSnap = await getDoc(examRef);
+                if (!examSnap.exists() || examSnap.data().teacherId !== user.uid) {
+                    setError('Sınav bulunamadı veya bu sayfayı görüntüleme yetkiniz yok.'); return;
+                }
+                const examData = examSnap.data() as Exam;
+                setExam(examData);
 
-  // --- Analysis State & Submission Effects ---
-  useEffect(() => {
-    // Sunucudan analiz sonucu geldiğinde çalışır
-    if (analysisState.message) {
-      setDisplayMessage({ text: analysisState.message, success: analysisState.success, key: Date.now() });
-      setIsAnalyzing(false); // Analizi durdur ve arayüzü aç
-    }
-  }, [analysisState]);
-  
-  useEffect(() => {
-    // isAnalyzing state'i true olunca formu otomatik gönderir
-    if (isAnalyzing) {
-        analysisFormRef.current?.requestSubmit();
-    }
-  }, [isAnalyzing]);
+                if (examData.classId) {
+                    const studentsRef = collection(db, 'classes', examData.classId, 'students');
+                    const studentsSnap = await getDocs(studentsRef);
+                    const studentsList = studentsSnap.docs.map(s => ({ id: s.id, ...s.data() } as Student)).sort((a,b) => a.studentNumber.localeCompare(b.studentNumber, undefined, { numeric: true }));
+                    setStudents(studentsList);
+                } else {
+                    setError('Sınava atanmış bir sınıf bulunamadı.');
+                }
+            } catch (err: any) {
+                setError(`Veri yüklenirken bir hata oluştu: ${err.message}`);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchExamData();
+    }, [examId, user, authLoading, router]);
+    
+    const handleFileChange = useMemo(() => {
+        const studentPaperCounts: { [key: string]: number } = {};
+        return (studentId: string, change: number) => {
+            if (change > 0) {
+                 studentPaperCounts[studentId] = (studentPaperCounts[studentId] || 0) + change;
+            } else {
+                 studentPaperCounts[studentId] = Math.max(0, (studentPaperCounts[studentId] || 0) + change);
+            }
+            
+            const total = Object.values(studentPaperCounts).reduce((sum, count) => sum + count, 0);
+            setTotalPaperCount(total);
+        }
+    }, []);
 
-  // --- Analysis Message Timer ---
-  useEffect(() => {
-    if (displayMessage.text) {
-        const timer = setTimeout(() => setDisplayMessage({ text: '', success: false, key: 0 }), 5000);
-        return () => clearTimeout(timer);
-    }
-  }, [displayMessage]);
-  
-  const handleAnalysisClick = () => {
-    setIsAnalyzing(true); // Sadece arayüzü kilitle, formu useEffect tetikleyecek
-  };
-  
-  const allFiles = Object.values(initialFiles).flat();
-  const hasUploadedFiles = allFiles.length > 0;
+    useEffect(() => {
+        if (analysisState.message) {
+            setIsAnalyzing(false);
+            if (analysisState.success) {
+                toast.success("Analiz başarıyla tamamlandı! Puan tablosuna yönlendiriliyorsunuz...");
+                router.push(`/dashboard/analysis/${examId}`);
+            } else {
+                toast.error(`Analiz Hatası: ${analysisState.message}`);
+            }
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [analysisState]);
 
-  if (loading || authLoading) {
-    return <div className="d-flex vh-100 align-items-center justify-content-center"><Loader2 className="animate-spin h-8 w-8 text-primary" /> <span className="ms-3 fs-5 text-muted">Öğrenciler ve dosyalar yükleniyor...</span></div>;
-  }
-  if (!user) { return <div className="alert alert-danger m-5">Bu sayfayı görüntülemek için giriş yapmalısınız.</div>; }
+    if (isLoading) return <div className="d-flex vh-100 align-items-center justify-content-center"><Loader2 className="animate-spin h-8 w-8 text-primary" /> <span className="ms-3 fs-5 text-muted">Yükleme Sayfası Hazırlanıyor...</span></div>;
+    if (error) return <Alert variant="danger" className="m-4"><ShieldX className="me-2"/>{error}</Alert>;
 
-  return (
-    <div className="container-fluid p-4">
-        <header className="border-bottom pb-3 mb-4">
-            <Link href={`/dashboard/exams/${examId}`} className="btn btn-outline-secondary mb-3">
-                <ArrowLeft size={16} className="me-2"/> Sınav Detayına Dön
-            </Link>
-            <h1 className="h2">Sınav Kağıtlarını Yükle</h1>
-            <p className="text-muted">{examData?.title || 'Sınav'} için öğrenci sınav kağıtlarını yükleyin.</p>
-        </header>
-        <div className="card shadow-sm">
-            <div className="card-header"> <h5 className="mb-0">Öğrenci Listesi</h5> </div>
-            <div className="card-body p-0">
-                <ul className="list-group list-group-flush">
-                    {students.length > 0 ? students.map(student => (
-                       <StudentUploadForm key={student.id} student={student} examId={examId} teacherId={user.uid} initialFiles={initialFiles[student.id] || []} isAnalysisRunning={isAnalyzing} />
-                    )) : <p className="p-4 text-center text-muted">Bu sınava atanmış sınıfta öğrenci bulunmuyor.</p>}
-                </ul>
-            </div>
-        </div>
-
-        <div className="card shadow-sm mt-4">
-            <div className="card-body">
-                <h5 className="card-title d-flex align-items-center"><Wand2 className="me-2"/> Sınav Analizi</h5>
-                <p className="card-text text-muted">Tüm öğrenciler için yüklenen sınav kağıtlarının analizini başlatın. Bu işlem, yapay zeka kullanarak her bir kağıttaki puanları okuyacak ve sonuçları analiz tablolarına otomatik olarak işleyecektir.</p>
-                <form action={analysisAction} ref={analysisFormRef}>
-                    <input type="hidden" name="examId" value={examId} />
-                    <button type="button" onClick={handleAnalysisClick} className="btn btn-lg btn-success w-100" disabled={!hasUploadedFiles || isAnalyzing}>
-                        {isAnalyzing ? (
-                            <><Loader2 className="animate-spin me-2" size={20}/> Analiz Ediliyor, Lütfen bekleyin...</>
-                        ) : (
-                            <>Analizi Başlat</>
-                        )}
-                    </button>
-                </form>
-                {displayMessage.text && (
-                    <div key={displayMessage.key} className={`d-flex align-items-center alert ${displayMessage.success ? 'alert-success' : 'alert-danger'} mt-3`}>
-                        <AlertCircle className="me-2"/>
-                        {displayMessage.text}
+    return (
+        <div className="container-fluid p-4">
+            <Toaster position="bottom-right" />
+            <header className="border-bottom pb-3 mb-4">
+                <div className="d-flex justify-content-between align-items-center flex-wrap gap-3">
+                    <div>
+                        <Link href={`/dashboard/exams/${examId}`} className="btn btn-outline-secondary mb-3">
+                            <ArrowLeft size={16} className="me-2"/> Sınav Detayına Dön
+                        </Link>
+                        <h1 className="h2">{exam?.title}</h1>
+                        <p className="text-muted mb-0">Öğrencilerin sınav kağıtlarını yükleyin.</p>
                     </div>
+                    <div>
+                        <Form action={analysisFormAction} onSubmit={() => setIsAnalyzing(true)}>
+                            <input type="hidden" name="examId" value={examId} />
+                            <Button type="submit" variant="primary" size="lg" disabled={totalPaperCount === 0 || isAnalyzing}>
+                                <Sparkles size={18} className="me-2" />
+                                {isAnalyzing ? 'Analiz Ediliyor...' : `Analizi Başlat (${totalPaperCount} Kağıt)`}
+                            </Button>
+                        </Form>
+                    </div>
+                </div>
+            </header>
+
+            <div className="position-relative">
+                {isAnalyzing && <LoadingOverlay />}
+                <div className="row">
+                    {students.map(student => (
+                        <div key={student.id} className="col-md-6 col-lg-4">
+                            <StudentCard student={student} examId={examId} onFileChange={handleFileChange} />
+                        </div>
+                    ))}
+                </div>
+                {students.length === 0 && (
+                    <Alert variant='secondary' className="text-center p-5">
+                        Bu sınıfa henüz öğrenci eklenmemiş veya öğrenciler yüklenemedi.
+                    </Alert>
                 )}
             </div>
         </div>
+    );
+};
 
-    </div>
-  );
-}
+export default UploadPage;
