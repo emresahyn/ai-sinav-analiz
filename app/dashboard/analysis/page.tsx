@@ -1,11 +1,11 @@
-
 'use client';
 
 import { useEffect, useState } from 'react';
 import { collection, query, where, onSnapshot, getDoc, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/app/context/AuthContext';
-import { Loader2, ArrowRight } from 'lucide-react';
+// Ikon seti güncellendi
+import { Loader2, ArrowRight, FileText } from 'lucide-react';
 import Link from 'next/link';
 
 interface Exam {
@@ -80,7 +80,7 @@ export default function AnalysisPage() {
     <div className="container-fluid p-4">
       <div className="border-bottom pb-3 mb-3">
         <h1 className="h2">Sınav Analizleri</h1>
-        <p className="text-muted">Analiz yapmak için bir sınav seçin.</p>
+        <p className="text-muted">İlgili sınavın puanlarını düzenleyin veya detaylı analiz raporunu görüntüleyin.</p>
       </div>
 
       <div className="row g-4">
@@ -94,11 +94,18 @@ export default function AnalysisPage() {
                     <br/>
                     Tarih: {new Date(exam.date).toLocaleDateString()}
                 </p>
+                {/* --- DEĞİŞİKLİK BURADA BAŞLIYOR --- */}
                 <div className="mt-auto">
-                   <Link href={`/dashboard/analysis/${exam.id}`} className="btn btn-success btn-sm w-100">
-                       Analizi Görüntüle <ArrowRight size={16} className="ms-1"/>
-                   </Link>
+                   <div className="d-grid gap-2">
+                        <Link href={`/dashboard/analysis/${exam.id}`} className="btn btn-outline-secondary btn-sm w-100">
+                           Puan Tablosunu Düzenle <ArrowRight size={16} className="ms-1"/>
+                        </Link>
+                        <Link href={`/dashboard/reports/${exam.id}`} className="btn btn-primary btn-sm w-100">
+                           Analiz Raporunu Görüntüle <FileText size={16} className="ms-1"/>
+                        </Link>
+                   </div>
                 </div>
+                {/* --- DEĞİŞİKLİK BURADA BİTİYOR --- */}
               </div>
             </div>
           </div>

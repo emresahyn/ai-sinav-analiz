@@ -3,17 +3,14 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useFormState } from 'react-dom';
-import { doc, getDoc, collection, onSnapshot, query, where, getDocs } from 'firebase/firestore'; // where ve getDocs eklendi
+import { doc, getDoc, collection, onSnapshot, query, where, getDocs } from 'firebase/firestore';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation'; // Yönlendirme için bu satırı ekleyin
+import { useRouter } from 'next/navigation';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/app/context/AuthContext';
-import { addQuestionToExam, updateQuestionInExam, deleteQuestionFromExam } from '@/app/actions';
-import { Loader2, Plus, Edit, Trash2, ArrowLeft, BookOpen, AlertTriangle, CheckCircle, X, Upload } from 'lucide-react';
-import { Copy, Users } from 'lucide-react'; // 'Copy' ve 'Users' ikonlarını ekleyin
-import { Modal } from 'react-bootstrap';      // Modal bileşenini ekleyin
-import { cloneExam } from '@/app/actions';     // Yeni sunucu eylemini ekleyin
-
+import { addQuestionToExam, updateQuestionInExam, deleteQuestionFromExam, cloneExam, importKazanimsFromPdf } from '@/app/actions';
+import { Loader2, Plus, Edit, Trash2, ArrowLeft, BookOpen, AlertTriangle, CheckCircle, X, Upload, Copy, Users, FileText } from 'lucide-react';
+import { Modal } from 'react-bootstrap';
 
 // --- Type Definitions --- //
 interface ExamData {
@@ -27,12 +24,10 @@ interface Question {
     points: number;
     kazanim?: string;
 }
-// --- YENİ EKLENECEK KOD ---
 interface ClassData {
   id: string;
   name: string;
 }
-// --- YENİ EKLENECEK KOD BİTTİ ---
 
 // --- Main Page Component --- //
 export default function ExamDetailPage({ params }: { params: { id: string } }) {
@@ -46,16 +41,19 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
   const [updateState, updateAction] = useFormState(updateQuestionInExam, { message: '', success: false });
   const [formMessage, setFormMessage] = useState<{text: string, success: boolean} | null>(null);
 
+  // --- YENİ EKLENEN STATE'LER ---
+  const [pdfState, pdfImportAction] = useFormState(importKazanimsFromPdf, { success: false, message: '' });
+  const pdfFormRef = useRef<HTMLFormElement>(null);
+  // --- BİTTİ ---
+
   const addFormRef = useRef<HTMLFormElement>(null);
   const editFormRef = useRef<HTMLFormElement>(null);
   const examId = params.id;
-  const router = useRouter(); // Yönlendirme için router
+  const router = useRouter();
   
-  // --- YENİ EKLENECEK KODLAR ---
   const [showCloneModal, setShowCloneModal] = useState(false);
-  const [classes, setClasses] = useState<any[]>([]); // Sınıf listesi için state
+  const [classes, setClasses] = useState<any[]>([]);
   const [cloneState, cloneFormAction] = useFormState(cloneExam, { success: false, message: '' });
-  // --- YENİ EKLENECEK KODLAR BİTTİ ---
   
   // Load Exam and Question Data
   useEffect(() => {
@@ -88,6 +86,17 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
     if(updateState.message) setFormMessage({ text: updateState.message, success: updateState.success });
     if (updateState.success) setEditingQuestion(null);
   }, [updateState]);
+  
+  // --- YENİ EKLENEN EFFECT ---
+  useEffect(() => {
+      if (pdfState.message) {
+          setFormMessage({ text: pdfState.message, success: pdfState.success });
+          if (pdfState.success) {
+              pdfFormRef.current?.reset();
+          }
+      }
+  }, [pdfState]);
+  // --- BİTTİ ---
 
   const handleDelete = async (questionId: string) => {
       if(confirm('Bu soruyu silmek istediğinizden emin misiniz?')){
@@ -96,9 +105,7 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
           setFormMessage({text: result.message, success: result.success});
       }
   }
-// --- YENİ EKLENECEK KODLAR ---
 
-    // Kopyalama modal'ını açan ve sınıfları çeken fonksiyon
     const handleShowCloneModal = async () => {
       if (!user) return;
       try {
@@ -106,7 +113,7 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
           const querySnapshot = await getDocs(q);
           const userClasses = querySnapshot.docs
               .map(doc => ({ id: doc.id, ...doc.data() } as ClassData))
-              .filter(c => c.id !== examData?.classId); // Mevcut sınıfı listeden çıkar
+              .filter(c => c.id !== examData?.classId);
 
           setClasses(userClasses);
           setShowCloneModal(true);
@@ -115,13 +122,11 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
       }
   };
   
-  // Kopyalama işlemi sonucunu dinle ve bildirim/yönlendirme yap
   useEffect(() => {
       if (cloneState.message) {
           setFormMessage({ text: cloneState.message, success: cloneState.success });
           if (cloneState.success) {
               setShowCloneModal(false);
-              // Yeni sınavın sayfasına yönlendir
               if (cloneState.newExamId) {
                   router.push(`/dashboard/exams/${cloneState.newExamId}`);
               }
@@ -129,8 +134,6 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
       }
   }, [cloneState, router]);
 
-  // --- YENİ EKLENECEK KODLAR BİTTİ ---
-  // --- Render --- //
   if (loading || authLoading) {
     return <div className="d-flex vh-100 align-items-center justify-content-center"><Loader2 className="animate-spin h-8 w-8 text-primary" /> <span className="ms-3 fs-5 text-muted">Veriler yükleniyor...</span></div>;
   }
@@ -142,18 +145,15 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
   return (
     <div className="container-fluid p-4">
         <header className="border-bottom pb-3 mb-4">
-            {/* ... Sınavlara Dön butonu ... */}
             <Link href="/dashboard/exams" className="btn btn-outline-secondary mb-2">
                 <ArrowLeft size={16} className="me-2"/> Sınavlara Dön
             </Link>
-
             <div className="d-flex flex-wrap justify-content-between align-items-center mt-2 gap-2">
                 <div>
                     <h1 className="h2">{examData?.title || 'Sınav Detayları'}</h1>
                     <p className="text-muted mb-0">Bu sınavın sorularını, puanlarını ve kazanımlarını yönetin.</p>
                 </div>
                 <div className="d-flex flex-wrap gap-2">
-                    {/* --- YENİ BUTON BURAYA EKLENDİ --- */}
                     <button className="btn btn-outline-secondary" onClick={handleShowCloneModal}>
                         <Copy size={16} className="me-2"/> Sınavı Kopyala
                     </button>
@@ -177,9 +177,8 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
         )}
 
         <div className="row">
-            {/* Add/Edit Form Column */}
             <div className="col-lg-4 mb-4">
-                <div className="card shadow-sm">
+                 <div className="card shadow-sm">
                     <div className="card-header">
                         <h5 className="mb-0 d-flex align-items-center">
                            {editingQuestion ? <><Edit className="me-2"/> Soruyu Düzenle</> : <><Plus className="me-2"/> Yeni Soru Ekle</>}
@@ -203,9 +202,8 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* Question List Column */}
             <div className="col-lg-8">
-                <div className="card shadow-sm">
+                 <div className="card shadow-sm">
                      <div className="card-header">
                         <h5 className="mb-0 d-flex align-items-center">
                            <BookOpen className="me-2"/> Soru Listesi ({questions.length} Soru)
@@ -245,7 +243,45 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
         </div>
-        {/* --- YENİ EKLENECEK MODAL KODU --- */}
+
+        {/* --- YENİ PDF AKTARIM BÖLÜMÜ --- */}
+        <div className="row mt-4">
+            <div className="col-12">
+                <div className="card shadow-sm">
+                    <div className="card-header">
+                        <h5 className="mb-0 d-flex align-items-center">
+                            <FileText size={18} className="me-2" />
+                            PDF'ten Otomatik Kazanım Aktar
+                        </h5>
+                    </div>
+                    <div className="card-body">
+                        <p className="card-text text-muted">Bir PDF belgesinden kazanımları otomatik olarak içe aktarın. Kazanımların, `F.1.2.3.4. Açıklama...` formatında olduğu bir sayfa seçin.</p>
+                        <form ref={pdfFormRef} action={pdfImportAction} className="row g-3 align-items-end">
+                             <input type="hidden" name="examId" value={examId} />
+                             {user && <input type="hidden" name="teacherId" value={user.uid} />}
+
+                            <div className="col-md-6">
+                                <label htmlFor="pdfUrl" className="form-label">PDF Bağlantısı (URL)</label>
+                                <input type="url" name="pdfUrl" id="pdfUrl" className="form-control" placeholder="https://.../dosya.pdf" />
+                            </div>
+                            <div className="col-md-6">
+                                <label htmlFor="pdfFile" className="form-label">Veya Bilgisayardan PDF Yükle</label>
+                                <input type="file" name="pdfFile" id="pdfFile" className="form-control" accept=".pdf" />
+                            </div>
+                            <div className="col-md-9">
+                                 <label htmlFor="pageNumber" className="form-label">Sayfa Numarası</label>
+                                <input type="number" name="pageNumber" id="pageNumber" className="form-control" placeholder="Kazanımların olduğu sayfa" required defaultValue="1" min="1"/>
+                            </div>
+                            <div className="col-md-3">
+                               <button type="submit" className="btn btn-success w-100">Aktar</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {/* --- BİTTİ --- */}
+
         <Modal show={showCloneModal} onHide={() => setShowCloneModal(false)} centered>
             <Modal.Header closeButton>
                 <Modal.Title>Sınavı Kopyala</Modal.Title>
@@ -275,7 +311,6 @@ export default function ExamDetailPage({ params }: { params: { id: string } }) {
                 </Modal.Footer>
             </form>
         </Modal>
-        {/* --- YENİ EKLENECEK MODAL KODU BİTTİ --- */}
     </div>
   );
 }
